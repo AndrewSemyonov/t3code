@@ -5,6 +5,7 @@ import {
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
 import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -224,5 +225,35 @@ describe("useCloudLinkController", () => {
     expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
+  });
+
+  it("refreshes both states after unlink fails without replacing its error", async () => {
+    using _setup = setup();
+    await using screen = await mountController();
+    const message = "Disconnected locally, but relay cleanup failed (upstream_unavailable).";
+    testState.unlink.mockResolvedValueOnce(
+      AsyncResult.failure(
+        Cause.fail(Object.assign(new Error(message), { traceId: "unlink-trace" })),
+      ),
+    );
+    testState.refreshDiscovery.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Discovery unavailable"))),
+    );
+
+    expect(await screen.reconcile({ managedTunnel: false, publish: false })).toBe(false);
+    expect(testState.refreshLink).toHaveBeenCalledOnce();
+    expect(testState.refreshDiscovery).toHaveBeenCalledOnce();
+    expect(testState.toast).toHaveBeenCalledOnce();
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: message,
+        data: {
+          secondaryActionProps: {
+            children: "Copy trace ID",
+            onClick: expect.any(Function),
+          },
+        },
+      }),
+    );
   });
 });
