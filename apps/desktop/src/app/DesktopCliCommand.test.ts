@@ -134,7 +134,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.installOnFirstLaunch;
       const installed = yield* command.state;
       expect(installed.installedPath).toBe(link);
-      expect(installed.pathCommand).toBe(`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+      expect(installed.pathCommand).toBe(
+        `printf '\\n%s\\n' 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`,
+      );
 
       yield* command.uninstall;
       yield* command.installOnFirstLaunch;

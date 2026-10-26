@@ -1052,19 +1052,20 @@ describe("pathSetupCommand", () => {
     pathSetupCommand({ directory, home: "/Users/theo", shell, platform });
 
   it("writes to the startup file of the user's shell", () => {
-    expect(command("/Users/theo/.local/bin", "/bin/bash", "darwin")).toBe(
-      `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile`,
+    expect(command("/home/theo/.local/bin", "/bin/bash", "linux")).toBe(
+      `printf '\\n%s\\n' 'export PATH="/home/theo/.local/bin:$PATH"' >> ~/.bashrc`,
     );
     expect(command("/Users/theo/.local/bin", "/usr/bin/fish", "linux")).toBe(
       "fish_add_path $HOME/.local/bin",
     );
     expect(command("/opt/t3/bin", "/bin/zsh", "linux")).toBe(
-      `echo 'export PATH="/opt/t3/bin:$PATH"' >> ~/.zshrc`,
+      `printf '\\n%s\\n' 'export PATH="/opt/t3/bin:$PATH"' >> ~/.zshrc`,
     );
   });
 
   it("prints nothing for Windows, other shells, or a path a pasted command would mangle", () => {
     expect(command("/Users/theo/.local/bin", "/bin/tcsh", "darwin")).toBeUndefined();
+    expect(command("/Users/theo/.local/bin", "/bin/bash", "darwin")).toBeUndefined();
     expect(command("C:\\Users\\theo\\.local\\bin", "pwsh", "win32")).toBeUndefined();
     expect(command("/Users/theo/it's here", "/bin/zsh", "darwin")).toBeUndefined();
     expect(command("/opt/a$PWD/bin", "/bin/zsh", "linux")).toBeUndefined();

@@ -56,7 +56,10 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       const installed = yield* provide(installCli());
       assert.equal(yield* fs.readLink(link), executable);
       assert.isFalse(installed.onPath);
-      assert.equal(installed.pathCommand, `echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc`);
+      assert.equal(
+        installed.pathCommand,
+        `printf '\\n%s\\n' 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc`,
+      );
 
       // A link written through a symlinked T3 home is still ours.
       const alias = path.join(root, "alias");

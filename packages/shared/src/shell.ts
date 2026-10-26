@@ -969,7 +969,7 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
 /**
  * A command to paste that puts `directory` on PATH for new zsh, bash, or fish terminals. Undefined
  * on Windows (a pasted command would flatten the registry PATH's `%VAR%` entries), for other
- * shells, or for unsafe paths.
+ * shells, macOS bash, or unsafe paths.
  */
 export function pathSetupCommand(input: {
   readonly directory: string;
@@ -984,10 +984,13 @@ export function pathSetupCommand(input: {
   const directory = underHome ? `$HOME${rest}` : rest;
   const shell = input.shell?.split("/").pop();
   if (shell === "fish") return `fish_add_path ${directory}`;
-  const line = `export PATH="${directory}:$PATH"`;
-  if (shell === "zsh") return `echo '${line}' >> ~/.zshrc`;
-  if (shell === "bash") {
-    return `echo '${line}' >> ${input.platform === "darwin" ? "~/.bash_profile" : "~/.bashrc"}`;
-  }
-  return undefined;
+  // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const rc =
+    shell === "zsh"
+      ? "~/.zshrc"
+      : shell === "bash" && input.platform !== "darwin"
+        ? "~/.bashrc"
+        : undefined;
+  // The leading newline keeps the line out of a final comment with no newline after it.
+  return rc && `printf '\\n%s\\n' 'export PATH="${directory}:$PATH"' >> ${rc}`;
 }
