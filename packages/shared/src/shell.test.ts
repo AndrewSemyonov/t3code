@@ -1058,10 +1058,13 @@ describe("pathSetupCommand", () => {
     expect(command("/Users/theo/.local/bin", "/usr/bin/fish", "linux")).toBe(
       "fish_add_path $HOME/.local/bin",
     );
-    expect(command("/opt/t3/bin", undefined, "linux")).toBe(`export PATH="/opt/t3/bin:$PATH"`);
+    expect(command("/opt/t3/bin", "/bin/zsh", "linux")).toBe(
+      `echo 'export PATH="/opt/t3/bin:$PATH"' >> ~/.zshrc`,
+    );
   });
 
-  it("prints nothing for Windows or a path a pasted command would mangle", () => {
+  it("prints nothing for Windows, other shells, or a path a pasted command would mangle", () => {
+    expect(command("/Users/theo/.local/bin", "/bin/tcsh", "darwin")).toBeUndefined();
     expect(command("C:\\Users\\theo\\.local\\bin", "pwsh", "win32")).toBeUndefined();
     expect(command("/Users/theo/it's here", "/bin/zsh", "darwin")).toBeUndefined();
   });

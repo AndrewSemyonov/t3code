@@ -257,12 +257,21 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.equal(older.stdout.trim(), `stub connect launcher=${launcher}`, older.stderr);
 
         const desktopShim = path.join(home, "bin", "t3");
+        const desktopApp = path.join(root, "T3 Code's app");
         yield* fs.makeDirectory(path.dirname(desktopShim), { recursive: true });
         yield* fs.writeFileString(
           desktopShim,
-          `#!/bin/sh\n# T3 Code version: ${VERSION}\necho "desktop $*"\nexit 6\n`,
+          `#!/bin/sh\n# T3 Code version: ${VERSION}\napp='${desktopApp.replaceAll("'", `'"'"'`)}'\necho "desktop $*"\nexit 6\n`,
         );
         yield* fs.chmod(desktopShim, 0o755);
+        const removedApp = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(
+          removedApp.stdout.trim(),
+          `stub connect launcher=${launcher}`,
+          removedApp.stderr,
+        );
+
+        yield* fs.writeFileString(desktopApp, "");
         const desktop = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
         assert.equal(desktop.stdout.trim(), "desktop connect", desktop.stderr);
       }),

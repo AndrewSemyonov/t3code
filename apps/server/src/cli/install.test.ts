@@ -26,7 +26,7 @@ const setup = Effect.gen(function* () {
     JSON.stringify({ name: "t3", version: VERSION }),
   );
   const binDir = path.join(root, "bin");
-  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>, env: NodeJS.ProcessEnv = {}) =>
     effect.pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.HomeDirectory, root),
@@ -37,9 +37,10 @@ const setup = Effect.gen(function* () {
         SHELL: "/bin/zsh",
         T3CODE_INSTALL_BIN_DIR: binDir,
         T3CODE_NPM_LAUNCHER_PATH: path.join(npmPackage, "bin/t3.mjs"),
+        ...env,
       }),
     );
-  return { root, runtimeDir, executable, link: path.join(binDir, "t3"), provide };
+  return { root, npmPackage, runtimeDir, executable, link: path.join(binDir, "t3"), provide };
 });
 
 it.layer(NodeServices.layer)("t3 install", (it) => {
@@ -57,6 +58,11 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.isFalse(installed.onPath);
       assert.equal(installed.pathCommand, `echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc`);
 
+      // A link written through a symlinked T3 home is still ours.
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(path.join(root, ".t3"), alias);
+      yield* fs.remove(link);
+      yield* fs.symlink(path.join(alias, "runtime/versions", VERSION, "t3"), link);
       yield* provide(installCli());
       const recorded = yield* fs.readFileString(path.join(runtimeDir, "launchers"));
       assert.equal(recorded, `${yield* fs.realPath(path.join(root, "bin"))}/t3\n`);
@@ -73,9 +79,13 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { runtimeDir, executable, link, provide } = yield* setup;
+      const { root, npmPackage, runtimeDir, executable, link, provide } = yield* setup;
       let asked = 0;
-      const offer = (answer: boolean, args: ReadonlyArray<string> = ["connect"]) =>
+      const offer = (
+        answer: boolean | undefined,
+        args: ReadonlyArray<string> = ["connect"],
+        env: NodeJS.ProcessEnv = {},
+      ) =>
         provide(
           offerCliInstall({
             args,
@@ -85,10 +95,25 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
               return answer;
             }),
           }),
+          env,
         );
 
       yield* offer(false, ["connect", "--help"]);
+      yield* offer(false, ["connect"], { T3CODE_USE_NPM: "1" });
+      const globalBin = path.join(root, "global-bin");
+      yield* fs.makeDirectory(globalBin);
+      yield* fs.writeFileString(path.join(globalBin, "t3"), "");
+      yield* offer(false, ["connect"], { PATH: globalBin });
       assert.equal(asked, 0);
+
+      // npx's own .bin on PATH is not an installed t3.
+      const npxBin = path.join(npmPackage, "../.bin");
+      yield* fs.makeDirectory(npxBin);
+      yield* fs.writeFileString(path.join(npxBin, "t3"), "");
+      assert.isFalse(yield* offer(undefined, ["connect"], { PATH: npxBin }));
+      assert.equal(asked, 1);
+      assert.isFalse(yield* fs.exists(path.join(runtimeDir, "install-prompt-declined")));
+      asked = 0;
 
       yield* offer(false);
       yield* offer(false);

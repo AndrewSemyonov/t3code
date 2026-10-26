@@ -161,6 +161,7 @@ function newestInstalled(home) {
         const installed = relative.split(path.sep)[0];
         if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
         if (!isComplete(path.join(versions, installed), installed)) continue;
+        fs.accessSync(target, fs.constants.X_OK);
         // A Windows `t3.cmd` needs a shell; its target does not.
         found.push({
           version: installed,
@@ -172,8 +173,11 @@ function newestInstalled(home) {
   if (process.platform !== "win32") {
     const shim = path.join(home, "bin", "t3");
     try {
-      const desktop = /^# T3 Code version: (\S+)$/m.exec(fs.readFileSync(shim, "utf8"))?.[1];
-      if (desktop) found.push({ version: desktop, command: shim });
+      const content = fs.readFileSync(shim, "utf8");
+      const desktop = /^# T3 Code version: (\S+)$/m.exec(content)?.[1];
+      // A moved or deleted app leaves the shim behind; it would only print an error.
+      const app = /^app='(.*)'$/m.exec(content)?.[1]?.replaceAll(`'"'"'`, "'");
+      if (desktop && app && fs.existsSync(app)) found.push({ version: desktop, command: shim });
     } catch {}
   }
   return found.sort((a, b) => compareVersions(b.version, a.version))[0];

@@ -967,8 +967,9 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
 });
 
 /**
- * A command to paste that puts `directory` on PATH for new POSIX terminals. Undefined on Windows
- * (a pasted command would flatten the registry PATH's `%VAR%` entries) or for unsafe paths.
+ * A command to paste that puts `directory` on PATH for new zsh, bash, or fish terminals. Undefined
+ * on Windows (a pasted command would flatten the registry PATH's `%VAR%` entries), for other
+ * shells, or for unsafe paths.
  */
 export function pathSetupCommand(input: {
   readonly directory: string;
@@ -988,5 +989,5 @@ export function pathSetupCommand(input: {
   if (shell === "bash") {
     return `echo '${line}' >> ${input.platform === "darwin" ? "~/.bash_profile" : "~/.bashrc"}`;
   }
-  return line;
+  return undefined;
 }

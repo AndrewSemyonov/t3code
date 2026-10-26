@@ -54,10 +54,14 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const link = path.join(binDir, name);
   const failed = (reason: string) => () => new CliInstallError({ reason });
 
+  // Resolve fully so a link through a symlinked T3 home still counts as ours; a dangling one
+  // (a pruned version) falls back to its own text.
   const current = windows
     ? yield* fs.readFileString(link).pipe(Effect.map(windowsShimTarget), Effect.option)
     : yield* fs.readLink(link).pipe(
-        Effect.map((target) => path.resolve(binDir, target)),
+        Effect.flatMap((target) =>
+          fs.realPath(link).pipe(Effect.orElseSucceed(() => path.resolve(binDir, target))),
+        ),
         Effect.option,
       );
   const occupied = Option.isSome(current) || (yield* fs.exists(link));
@@ -138,51 +142,79 @@ export const installCommand = Command.make("install").pipe(
 /** Saying no lasts until the next minor release: `0.2` covers `0.2.5` and `0.2.6-nightly.…`. */
 const minorRelease = (version: string) => version.split(".").slice(0, 2).join(".");
 
-const SKIPPED_ARGUMENTS = new Set(["help", "--help", "-h", "--version", "install", "uninstall"]);
+const SKIPPED_ARGUMENTS = new Set([
+  "help",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+  "install",
+  "uninstall",
+]);
 
 /**
  * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `t3`
- * command. Yes is the default; no is saved in the T3 home per minor release.
+ * command. Yes is the default; no is saved in the T3 home per minor release. Returns false when
+ * the user quits the prompt, so the command does not run.
  */
 export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R>(input: {
   readonly args: ReadonlyArray<string>;
   readonly interactive: boolean;
-  readonly confirm: Effect.Effect<boolean, E, R>;
+  /** Undefined when the user quits the prompt. */
+  readonly confirm: Effect.Effect<boolean | void, E, R>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
-  if (!input.interactive || environment.CI || environment.SUDO_USER) return;
-  if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return;
-  const runner = detectCliRunner(yield* resolveEntryPath);
-  if (runner === null) return;
+  if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
+  if (environment.T3CODE_USE_NPM === "1") return true;
+  if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return true;
+  const entry = yield* resolveEntryPath;
+  const runner = detectCliRunner(entry);
+  if (runner === null) return true;
   const runtime = yield* standaloneRuntime;
-  if (Option.isNone(runtime)) return;
+  if (Option.isNone(runtime)) return true;
   const { runtimeDir } = runtime.value;
-  // An installed `t3` that is older, or skipped with T3CODE_USE_NPM, still means no prompt.
+
+  // Any t3 already installed means no prompt: ours (even when off PATH) or another on PATH.
+  // npx puts its own cache's node_modules/.bin on PATH, so skip that.
+  const windows = platform === "win32";
+  const names = windows ? ["t3.cmd", "t3.exe"] : ["t3"];
+  const runnerModules = path.resolve(entry, "../../..");
   const launchers = yield* fs
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
-  for (const launcher of [
+  const candidates = [
     ...launchers.split(/\r?\n/).filter(Boolean),
-    path.join(path.dirname(runtimeDir), "bin", "t3"),
-  ]) {
-    if (yield* fs.exists(launcher).pipe(Effect.orElseSucceed(() => false))) return;
+    path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
+    ...(environment.PATH ?? environment.Path ?? "")
+      .split(windows ? ";" : ":")
+      .filter((directory) => path.isAbsolute(directory) && !directory.startsWith(runnerModules))
+      .flatMap((directory) => names.map((name) => path.join(directory, name))),
+  ];
+  for (const candidate of candidates) {
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return true;
   }
+
   const declinedFile = path.join(runtimeDir, "install-prompt-declined");
   const declined = yield* fs.readFileString(declinedFile).pipe(Effect.orElseSucceed(() => ""));
   const minor = minorRelease(packageJson.version);
-  if (declined.trim() === minor) return;
+  if (declined.trim() === minor) return true;
 
-  if (!(yield* input.confirm)) {
+  const answer = yield* input.confirm;
+  if (answer === undefined) return false;
+  if (!answer) {
     yield* fs.writeFileString(declinedFile, `${minor}\n`).pipe(Effect.ignore);
-    return yield* Console.log(`Skipped. Run \`${runner} t3 install\` any time.\n`);
+    yield* Console.log(`Skipped. Run \`${runner} t3 install\` any time.\n`);
+    return true;
   }
   yield* installCli().pipe(
     Effect.flatMap(reportInstalled),
     Effect.catch((error) => Console.error(`Could not install t3: ${error.message}`)),
   );
   yield* Console.log("");
+  return true;
 });
 
 export const confirmCliInstall = Prompt.run(
@@ -190,4 +222,4 @@ export const confirmCliInstall = Prompt.run(
     message: "Install the t3 command? Then you can run `t3` without npx.",
     initial: true,
   }),
-);
+).pipe(Effect.catchTags({ QuitError: () => Effect.void }));

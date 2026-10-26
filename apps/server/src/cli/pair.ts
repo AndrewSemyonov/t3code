@@ -78,12 +78,13 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number, windows: Schema.Boolean },
 ) {
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      // npx runs an installed t3 instead when it is newer; the opt-out keeps the pinned version.
+      `Pair with the matching CLI instead: \`${this.windows ? "$env:T3CODE_USE_NPM=1; " : "T3CODE_USE_NPM=1 "}npx t3@${this.serverVersion} pair\`.`,
     ].join("\n");
   }
 }
@@ -494,6 +495,7 @@ export const pairCommand = Command.make("pair", {
         return yield* new IncompatibleServerProtocolError({
           serverVersion: target.descriptor.serverVersion,
           serverProtocolVersion,
+          windows: (yield* HostProcess.Platform) === "win32",
         });
       }
 

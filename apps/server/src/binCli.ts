@@ -106,7 +106,13 @@ export function runCli() {
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     confirm: confirmCliInstall,
   }).pipe(
-    Effect.andThen(Command.run(cli, { version: packageJson.version })),
+    Effect.flatMap((proceed) =>
+      proceed
+        ? Command.run(cli, { version: packageJson.version })
+        : Effect.sync(() => {
+            process.exitCode = 130;
+          }),
+    ),
     Effect.scoped,
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,
