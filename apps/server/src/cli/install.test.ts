@@ -66,7 +66,8 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.symlink(path.join(root, ".t3"), alias);
       yield* fs.remove(link);
       yield* fs.symlink(path.join(alias, "runtime/versions", VERSION, "t3"), link);
-      yield* provide(installCli());
+      const onPath = yield* provide(installCli(), { PATH: `/usr/bin:${path.join(root, "bin")}/` });
+      assert.isTrue(onPath.onPath);
       const recorded = yield* fs.readFileString(path.join(runtimeDir, "launchers"));
       assert.equal(recorded, `${yield* fs.realPath(path.join(root, "bin"))}/t3\n`);
 

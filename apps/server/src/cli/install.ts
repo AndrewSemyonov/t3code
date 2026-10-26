@@ -106,8 +106,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     yield* fs.writeFileString(launchersFile, `${recorded}\n`, { flag: "a" }).pipe(Effect.ignore);
   }
 
-  const same = (entry: string) =>
-    windows ? entry.toLowerCase() === binDir.toLowerCase() : entry === binDir;
+  // resolve() drops trailing separators, so `~/.local/bin/` on PATH still matches.
+  const normalize = (value: string) =>
+    windows ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const same = (entry: string) => entry !== "" && normalize(entry) === normalize(binDir);
   const onPath = (environment.PATH ?? environment.Path ?? "").split(windows ? ";" : ":").some(same);
   return {
     link,
