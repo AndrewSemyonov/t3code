@@ -1067,5 +1067,6 @@ describe("pathSetupCommand", () => {
     expect(command("/Users/theo/.local/bin", "/bin/tcsh", "darwin")).toBeUndefined();
     expect(command("C:\\Users\\theo\\.local\\bin", "pwsh", "win32")).toBeUndefined();
     expect(command("/Users/theo/it's here", "/bin/zsh", "darwin")).toBeUndefined();
+    expect(command("/opt/a$PWD/bin", "/bin/zsh", "linux")).toBeUndefined();
   });
 });

@@ -978,10 +978,10 @@ export function pathSetupCommand(input: {
   readonly platform: NodeJS.Platform;
 }): string | undefined {
   if (input.platform === "win32") return undefined;
-  const directory = input.directory.startsWith(`${input.home}/`)
-    ? `$HOME${input.directory.slice(input.home.length)}`
-    : input.directory;
-  if (!/^[\w$./-]+$/.test(directory)) return undefined;
+  const underHome = input.directory.startsWith(`${input.home}/`);
+  const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
+  if (!/^[\w./-]+$/.test(rest)) return undefined;
+  const directory = underHome ? `$HOME${rest}` : rest;
   const shell = input.shell?.split("/").pop();
   if (shell === "fish") return `fish_add_path ${directory}`;
   const line = `export PATH="${directory}:$PATH"`;
