@@ -10,7 +10,7 @@ import { Command, Prompt } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { launcherOwnsVersionsDir, windowsShimTarget } from "../cloud/pinnedRuntime.ts";
-import { detectCliRunner, resolveEntryPath } from "./invocation.ts";
+import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {
   reason: Schema.String,
@@ -170,18 +170,15 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R>(i
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
   if (environment.T3CODE_USE_NPM === "1") return true;
   if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return true;
-  const entry = yield* resolveEntryPath;
-  const runner = detectCliRunner(entry);
-  if (runner === null) return true;
+  if (detectCliRunner(yield* resolveEntryPath) === null) return true;
   const runtime = yield* standaloneRuntime;
   if (Option.isNone(runtime)) return true;
   const { runtimeDir } = runtime.value;
 
   // Any t3 already installed means no prompt: ours (even when off PATH) or another on PATH.
-  // npx puts its own cache's node_modules/.bin on PATH, so skip that.
+  // Runners put their own cache's node_modules/.bin on PATH, so skip those.
   const windows = platform === "win32";
   const names = windows ? ["t3.cmd", "t3.exe"] : ["t3"];
-  const runnerModules = path.resolve(entry, "../../..");
   const launchers = yield* fs
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
@@ -190,7 +187,9 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R>(i
     path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
     ...(environment.PATH ?? environment.Path ?? "")
       .split(windows ? ";" : ":")
-      .filter((directory) => path.isAbsolute(directory) && !directory.startsWith(runnerModules))
+      .filter(
+        (directory) => path.isAbsolute(directory) && detectCliRunner(`${directory}/`) === null,
+      )
       .flatMap((directory) => names.map((name) => path.join(directory, name))),
   ];
   for (const candidate of candidates) {
@@ -206,7 +205,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R>(i
   if (answer === undefined) return false;
   if (!answer) {
     yield* fs.writeFileString(declinedFile, `${minor}\n`).pipe(Effect.ignore);
-    yield* Console.log(`Skipped. Run \`${runner} t3 install\` any time.\n`);
+    yield* Console.log(`Skipped. Run \`${yield* resolveCliCommand("install")}\` any time.\n`);
     return true;
   }
   yield* installCli().pipe(

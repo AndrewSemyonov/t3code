@@ -252,6 +252,13 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         });
         assert.equal(optedOut.stdout.trim(), `stub connect launcher=${launcher}`, optedOut.stderr);
 
+        yield* fs.chmod(path.join(home, "runtime/versions/1.2.4-nightly.20261026.1/t3"), 0o644);
+        const brokenInstall = yield* run(process.execPath, [launcher, "connect"], {
+          cwd: root,
+          env,
+        });
+        assert.equal(brokenInstall.stdout.trim(), `stub connect launcher=${launcher}`);
+
         yield* installAs("1.2.3-nightly.20261026.1");
         const older = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
         assert.equal(older.stdout.trim(), `stub connect launcher=${launcher}`, older.stderr);
@@ -272,6 +279,13 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         );
 
         yield* fs.writeFileString(desktopApp, "");
+        const notExecutable = yield* run(process.execPath, [launcher, "connect"], {
+          cwd: root,
+          env,
+        });
+        assert.equal(notExecutable.stdout.trim(), `stub connect launcher=${launcher}`);
+
+        yield* fs.chmod(desktopApp, 0o755);
         const desktop = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
         assert.equal(desktop.stdout.trim(), "desktop connect", desktop.stderr);
       }),

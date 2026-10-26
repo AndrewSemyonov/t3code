@@ -106,11 +106,14 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, ["connect"], { PATH: globalBin });
       assert.equal(asked, 0);
 
-      // npx's own .bin on PATH is not an installed t3.
+      // A runner's own .bin on PATH is not an installed t3.
       const npxBin = path.join(npmPackage, "../.bin");
-      yield* fs.makeDirectory(npxBin);
-      yield* fs.writeFileString(path.join(npxBin, "t3"), "");
-      assert.isFalse(yield* offer(undefined, ["connect"], { PATH: npxBin }));
+      const pnpmBin = path.join(root, ".cache/pnpm/dlx/abc/node_modules/.bin");
+      for (const bin of [npxBin, pnpmBin]) {
+        yield* fs.makeDirectory(bin, { recursive: true });
+        yield* fs.writeFileString(path.join(bin, "t3"), "");
+      }
+      assert.isFalse(yield* offer(undefined, ["connect"], { PATH: `${npxBin}:${pnpmBin}` }));
       assert.equal(asked, 1);
       assert.isFalse(yield* fs.exists(path.join(runtimeDir, "install-prompt-declined")));
       asked = 0;

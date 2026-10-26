@@ -177,7 +177,11 @@ function newestInstalled(home) {
       const desktop = /^# T3 Code version: (\S+)$/m.exec(content)?.[1];
       // A moved or deleted app leaves the shim behind; it would only print an error.
       const app = /^app='(.*)'$/m.exec(content)?.[1]?.replaceAll(`'"'"'`, "'");
-      if (desktop && app && fs.existsSync(app)) found.push({ version: desktop, command: shim });
+      if (desktop && app) {
+        // Throws, skipping the shim, when either cannot run.
+        for (const file of [app, shim]) fs.accessSync(file, fs.constants.X_OK);
+        found.push({ version: desktop, command: shim });
+      }
     } catch {}
   }
   return found.sort((a, b) => compareVersions(b.version, a.version))[0];
