@@ -25,7 +25,11 @@ import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
-import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
+import {
+  readPrimaryCloudLinkState,
+  unlinkPrimaryEnvironmentFromCloud,
+  type CloudLinkTarget,
+} from "./linkEnvironment";
 
 const TARGET: CloudLinkTarget = {
   environmentId: "environment-1",
@@ -169,6 +173,48 @@ describe("web cloud link environment client", () => {
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).not.toBe("include");
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+    }),
+  );
+
+  it.effect("reports why the relay kept the environment after a local unlink", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          String(input).startsWith("https://relay.example.test/")
+            ? Response.json(
+                {
+                  _tag: "RelayInternalError",
+                  code: "internal_error",
+                  reason: "upstream_unavailable",
+                  traceId: "trace-unlink",
+                },
+                { status: 500 },
+              )
+            : Response.json({ ok: true, endpointRuntimeStatus: null }),
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", {
+        location: { origin: "t3code://app" },
+        desktopBridge: {
+          getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+        } as unknown as DesktopBridge,
+      });
+
+      const error = yield* withServices(
+        unlinkPrimaryEnvironmentFromCloud({ target: TARGET, clerkToken: "clerk-token" }),
+      ).pipe(Effect.flip);
+
+      expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+        "http://127.0.0.1:3000/api/connect/unlink",
+        "https://relay.example.test/v1/client/environment-links/environment-1",
+      ]);
+      expect(error).toMatchObject({
+        _tag: "CloudEnvironmentLinkError",
+        message:
+          "Disconnected locally, but T3 Connect did not confirm it removed this environment: Relay encountered an internal error (upstream_unavailable).",
+        traceId: "trace-unlink",
+      });
     }),
   );
 });

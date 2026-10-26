@@ -242,10 +242,10 @@ export const unlinkPrimaryEnvironmentFromCloud: (input: {
         environmentId: EnvironmentId.make(input.target.environmentId),
       })
       .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not revoke cloud environment link after local unlink.", {
-            cause,
-          }),
+        Effect.mapError(
+          decodedRelayClientError(
+            "Disconnected locally, but T3 Connect did not confirm it removed this environment",
+          ),
         ),
       );
   }
