@@ -965,3 +965,28 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
 });
+
+/**
+ * A command to paste that puts `directory` on PATH for new POSIX terminals. Undefined on Windows
+ * (a pasted command would flatten the registry PATH's `%VAR%` entries) or for unsafe paths.
+ */
+export function pathSetupCommand(input: {
+  readonly directory: string;
+  readonly home: string;
+  readonly shell: string | undefined;
+  readonly platform: NodeJS.Platform;
+}): string | undefined {
+  if (input.platform === "win32") return undefined;
+  const directory = input.directory.startsWith(`${input.home}/`)
+    ? `$HOME${input.directory.slice(input.home.length)}`
+    : input.directory;
+  if (!/^[\w$./-]+$/.test(directory)) return undefined;
+  const shell = input.shell?.split("/").pop();
+  if (shell === "fish") return `fish_add_path ${directory}`;
+  const line = `export PATH="${directory}:$PATH"`;
+  if (shell === "zsh") return `echo '${line}' >> ~/.zshrc`;
+  if (shell === "bash") {
+    return `echo '${line}' >> ${input.platform === "darwin" ? "~/.bash_profile" : "~/.bashrc"}`;
+  }
+  return line;
+}

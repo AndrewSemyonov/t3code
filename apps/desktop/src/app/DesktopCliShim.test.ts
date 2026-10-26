@@ -28,7 +28,10 @@ const writeExecutable = (path: string, content: string) => {
 
 const writeShim = (root: string, target: CliShimTarget) => {
   const shim = NodePath.join(root, "bin", "t3");
-  writeExecutable(shim, renderCliShim({ target, shimPath: shim, t3Home: `${root}/home` }));
+  writeExecutable(
+    shim,
+    renderCliShim({ target, shimPath: shim, t3Home: `${root}/home`, version: "1.2.3" }),
+  );
   return shim;
 };
 
@@ -110,6 +113,7 @@ describe("renderCliShim", () => {
       target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
       shimPath: "C:\\Users\\José\\.t3\\bin\\t3.cmd",
       t3Home: "C:\\Users\\José\\.t3",
+      version: "1.2.3",
     });
     const lines = script.split("\r\n");
     expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");

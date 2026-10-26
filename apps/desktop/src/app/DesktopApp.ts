@@ -15,6 +15,7 @@ import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
@@ -198,6 +199,7 @@ const bootstrap = Effect.gen(function* () {
   const primaryBackend = yield* pool.primary;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
+  const cliCommand = yield* DesktopCliCommand.DesktopCliCommand;
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
@@ -249,6 +251,7 @@ const bootstrap = Effect.gen(function* () {
       Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
     );
     yield* Effect.forkScoped(wslBackend.reconcile);
+    yield* Effect.forkScoped(cliCommand.installOnFirstLaunch);
   }
 }).pipe(Effect.withSpan("desktop.bootstrap"));
 

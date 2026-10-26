@@ -26,3 +26,8 @@ export const APP_DISPLAY_NAME =
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
 export const DESKTOP_DOWNLOAD_URL = "https://t3.codes/download";
+/** Guesses the target computer's OS from the browser's; users usually set up the one they are on. */
+export const t3InstallCommand = (platform: string) =>
+  /^win/i.test(platform)
+    ? "irm https://t3.codes/install.ps1 | iex"
+    : "curl -fsSL https://t3.codes/install.sh | sh";

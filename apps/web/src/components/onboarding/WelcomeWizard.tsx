@@ -35,6 +35,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { t3InstallCommand } from "../../branding";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -527,7 +528,8 @@ function ConnectAccountOption({
             <p className="text-sm text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
-            <CommandBlock command="npx t3 connect" className="mt-3" />
+            <CommandBlock command={t3InstallCommand(navigator.platform)} className="mt-3" />
+            <CommandBlock command="t3 connect" className="mt-2" />
             <p className="mt-3 text-xs text-muted-foreground">
               Keep T3 Code running. Select the computers you want to set up above.
             </p>
@@ -636,9 +638,10 @@ function PairingForm({
             <p className="pt-3 text-sm text-muted-foreground">
               Run this on the computer with your code.
             </p>
-            <CommandBlock command="npx t3 pair" className="mt-2" />
+            <CommandBlock command={t3InstallCommand(navigator.platform)} className="mt-2" />
+            <CommandBlock command="t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start T3 Code first, or run <code className="font-mono">npx t3 serve</code>. Add{" "}
+              Start T3 Code first, or run <code className="font-mono">t3 serve</code>. Add{" "}
               <code className="font-mono">--tailscale</code> to use your tailnet.
             </p>
           </CollapsiblePanel>

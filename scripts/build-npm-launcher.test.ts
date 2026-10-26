@@ -97,6 +97,20 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   };
 });
 
+const unpackLauncher = Effect.fn("test.unpackLauncher")(function* (root: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const output = yield* buildNpmLauncher({ version: VERSION, outputDir: path.join(root, "out") });
+  const installed = path.join(root, "installed");
+  yield* fs.makeDirectory(installed);
+  const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
+    cwd: root,
+    env: { PATH: process.env.PATH },
+  });
+  assert.equal(unpack.exitCode, 0, unpack.stderr);
+  return { output, packageDir: path.join(installed, "package") };
+});
+
 it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "publishes a launcher that downloads, verifies, caches, and runs the release executable",
@@ -105,10 +119,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
-        const output = yield* buildNpmLauncher({
-          version: VERSION,
-          outputDir: path.join(root, "out"),
-        });
+        const { output, packageDir } = yield* unpackLauncher(root);
 
         const manifest = yield* decodeManifest(
           yield* fs.readFileString(path.join(output.packageDir, "package.json")),
@@ -118,15 +129,6 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.mjs" });
         assert.isUndefined(manifest.dependencies);
         assert.isUndefined(manifest.optionalDependencies);
-
-        const installed = path.join(root, "installed");
-        yield* fs.makeDirectory(installed);
-        const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
-          cwd: root,
-          env: { PATH: process.env.PATH },
-        });
-        assert.equal(unpack.exitCode, 0, unpack.stderr);
-        const packageDir = path.join(installed, "package");
 
         const release = yield* serveFakeRelease(root);
         const home = path.join(root, "home");
@@ -203,6 +205,66 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
           [],
         );
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "runs an installed t3 at least as new as its own version instead of npm's",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
+        const { packageDir } = yield* unpackLauncher(root);
+        const release = yield* serveFakeRelease(root);
+        const home = path.join(root, "home");
+        const env = {
+          PATH: process.env.PATH,
+          T3CODE_HOME: home,
+          T3CODE_RELEASE_BASE_URL: release.baseUrl,
+        };
+        const launcher = path.join(packageDir, "bin/t3.mjs");
+        const installAs = Effect.fn("test.installAs")(function* (version: string) {
+          const dir = path.join(home, "runtime/versions", version);
+          yield* fs.makeDirectory(dir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(dir, "t3"),
+            `#!/bin/sh\necho "installed ${version} $* launcher=$T3CODE_NPM_LAUNCHER_PATH"\nexit 5\n`,
+          );
+          yield* fs.chmod(path.join(dir, "t3"), 0o755);
+          yield* fs.writeFileString(path.join(dir, ".install-complete"), `${version}\n`);
+          const link = path.join(root, "bin", "t3");
+          yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+          yield* fs.remove(link, { force: true });
+          yield* fs.symlink(path.join(dir, "t3"), link);
+          yield* fs.writeFileString(path.join(home, "runtime/launchers"), `${link}\n`);
+        });
+
+        yield* installAs("1.2.4-nightly.20261026.1");
+        const newer = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(newer.stdout.trim(), "installed 1.2.4-nightly.20261026.1 connect launcher=");
+        assert.equal(newer.exitCode, 5);
+        assert.deepStrictEqual(release.requests, []);
+
+        const optedOut = yield* run(process.execPath, [launcher, "connect"], {
+          cwd: root,
+          env: { ...env, T3CODE_USE_NPM: "1" },
+        });
+        assert.equal(optedOut.stdout.trim(), `stub connect launcher=${launcher}`, optedOut.stderr);
+
+        yield* installAs("1.2.3-nightly.20261026.1");
+        const older = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(older.stdout.trim(), `stub connect launcher=${launcher}`, older.stderr);
+
+        const desktopShim = path.join(home, "bin", "t3");
+        yield* fs.makeDirectory(path.dirname(desktopShim), { recursive: true });
+        yield* fs.writeFileString(
+          desktopShim,
+          `#!/bin/sh\n# T3 Code version: ${VERSION}\necho "desktop $*"\nexit 6\n`,
+        );
+        yield* fs.chmod(desktopShim, 0o755);
+        const desktop = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(desktop.stdout.trim(), "desktop connect", desktop.stderr);
       }),
   );
 });

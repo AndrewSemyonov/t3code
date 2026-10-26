@@ -30,6 +30,7 @@ export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
   readonly t3Home: string;
+  readonly version: string;
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
@@ -70,6 +71,8 @@ export const renderCliShim = (input: {
   const header = [
     "#!/bin/sh",
     `# ${MARKER}`,
+    // The npm launcher reads this to prefer the app's t3 when it is at least as new.
+    `# T3 Code version: ${input.version}`,
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
     'export T3CODE_HOME="${T3CODE_HOME:-$home}"',
@@ -137,7 +140,12 @@ export const install = Effect.gen(function* () {
         }),
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
-  const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
+  const content = renderCliShim({
+    target,
+    shimPath,
+    t3Home: environment.baseDir,
+    version: environment.appVersion,
+  });
 
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);

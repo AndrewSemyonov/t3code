@@ -43,7 +43,10 @@ instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
+Node.js for `npx`). It offers to install the `t3` command first. If you say no,
+it asks again at the next minor release, and `npx t3 install` installs it later.
+When a `t3` at least as new is already installed, `npx t3` runs that one. Set
+`T3CODE_USE_NPM=1` to run npm's version anyway.
 
 ### Intel Macs
 
@@ -79,12 +82,13 @@ update fails. Download the new `.deb` and install it the same way.
 
 ### The `t3` command
 
-The desktop app includes the `t3` command-line tool. To run it from any
-terminal, open **Settings → General → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
+The desktop app includes the `t3` command-line tool and installs it on first
+launch. On macOS and Linux it adds a `t3` link to a folder on your `PATH`; on
+Windows it adds the app's command folder to your `PATH`. Open a new terminal
+afterwards. If the folder is not on your `PATH`, **Settings → General → About**
+shows the command to add it. **Remove** next to **t3 command** takes it off,
+and the app does not add it again; **Install** puts it back. If you already
+have another `t3`, it stays as it is.
 
 ### Windows Subsystem for Linux
 

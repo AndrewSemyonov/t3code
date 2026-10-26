@@ -97,9 +97,9 @@ async function install(dir, key) {
   }
 }
 
-const isComplete = (dir) => {
+const isComplete = (dir, expected = version) => {
   try {
-    return fs.readFileSync(path.join(dir, ".install-complete"), "utf8").trim() === version;
+    return fs.readFileSync(path.join(dir, ".install-complete"), "utf8").trim() === expected;
   } catch {
     return false;
   }
@@ -117,6 +117,72 @@ function publish(staging, dir) {
   }
 }
 
+/** Release order: numeric base, then a release above its prereleases, then prerelease fields. */
+function compareVersions(left, right) {
+  const parse = (value) => {
+    const [base, pre = ""] = value.split("+")[0].split(/-(.*)/s);
+    return { base: base.split(".").map(Number), pre: pre === "" ? [] : pre.split(".") };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let i = 0; i < 3; i++) if (a.base[i] !== b.base[i]) return a.base[i] - b.base[i];
+  if (a.pre.length === 0 || b.pre.length === 0) return b.pre.length - a.pre.length;
+  for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
+    const [x, y] = [a.pre[i], b.pre[i]];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const [xn, yn] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+    if (xn && yn) return Number(x) - Number(y);
+    if (xn !== yn) return xn ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * The newest `t3` installed in this home: launchers the install scripts and `t3 install` record,
+ * plus the desktop app's launcher, which names its version in a comment.
+ */
+function newestInstalled(home) {
+  const runtime = path.join(home, "runtime");
+  const found = [];
+  try {
+    const versions = path.join(runtime, "versions");
+    const base = process.platform === "win32" ? versions : fs.realpathSync(versions);
+    for (const launcher of fs
+      .readFileSync(path.join(runtime, "launchers"), "utf8")
+      .split(/\r?\n/)) {
+      try {
+        const target =
+          process.platform === "win32"
+            ? /^"([^"]+)"/m.exec(fs.readFileSync(launcher, "utf8"))?.[1]
+            : fs.realpathSync(launcher);
+        const relative = target ? path.relative(base, target) : "..";
+        const installed = relative.split(path.sep)[0];
+        if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+        if (!isComplete(path.join(versions, installed), installed)) continue;
+        // A Windows `t3.cmd` needs a shell; its target does not.
+        found.push({
+          version: installed,
+          command: process.platform === "win32" ? target : launcher,
+        });
+      } catch {}
+    }
+  } catch {}
+  if (process.platform !== "win32") {
+    const shim = path.join(home, "bin", "t3");
+    try {
+      const desktop = /^# T3 Code version: (\S+)$/m.exec(fs.readFileSync(shim, "utf8"))?.[1];
+      if (desktop) found.push({ version: desktop, command: shim });
+    } catch {}
+  }
+  return found.sort((a, b) => compareVersions(b.version, a.version))[0];
+}
+
+function note(message) {
+  if (process.stderr.isTTY) process.stderr.write(`t3: ${message}\n`);
+}
+
 async function main() {
   const key = `${process.platform}-${process.arch}`;
   if (!SUPPORTED.includes(key)) {
@@ -125,20 +191,37 @@ async function main() {
         "The desktop app is at https://github.com/pingdotgg/t3code/releases",
     );
   }
-  const dir = path.join(t3Home(), "runtime", "versions", version);
-  if (!isComplete(dir)) await install(dir, key);
-
+  const home = t3Home();
   // Service IPC and signals must reach the child; terminal Ctrl-C already does, so do not forward SIGINT twice.
   const ipc = process.send !== undefined;
-  const child = spawn(
+  const installed = ipc || process.env.T3CODE_USE_NPM === "1" ? undefined : newestInstalled(home);
+  if (installed && compareVersions(installed.version, version) >= 0) {
+    note(
+      `using your installed t3 ${installed.version}. Run \`t3\` directly next time, or set T3CODE_USE_NPM=1 for npm's ${version}.`,
+    );
+    const { T3CODE_NPM_LAUNCHER_PATH: _, ...env } = process.env;
+    return run(installed.command, env, ipc);
+  }
+  if (installed) {
+    note(
+      `your installed t3 ${installed.version} is older than ${version}, so npm's ${version} runs.`,
+    );
+  }
+  const dir = path.join(home, "runtime", "versions", version);
+  if (!isComplete(dir)) await install(dir, key);
+  // The executable lives in the T3 home, so this is how it knows npm launched it.
+  run(
     path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
-    process.argv.slice(2),
-    {
-      stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
-      // The executable lives in the T3 home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
-    },
+    { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
+    ipc,
   );
+}
+
+function run(executable, env, ipc) {
+  const child = spawn(executable, process.argv.slice(2), {
+    stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+    env,
+  });
   if (ipc) {
     process.on("message", (message) => child.connected && child.send(message));
     child.on("message", (message) => process.connected && process.send(message));

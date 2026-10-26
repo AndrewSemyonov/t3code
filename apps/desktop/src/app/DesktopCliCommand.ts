@@ -9,8 +9,13 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { pathSetupCommand } from "@t3tools/shared/shell";
+
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { makeComponentLogger } from "./DesktopObservability.ts";
+
+const { logInfo, logWarning } = makeComponentLogger("desktop-cli-command");
 
 export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommandError>()(
   "DesktopCliCommandError",
@@ -55,6 +60,8 @@ export class DesktopCliCommand extends Context.Service<
     readonly state: Effect.Effect<DesktopCliCommandState>;
     readonly install: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
     readonly uninstall: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
+    /** Installs the command on an app's first launch; removing it in Settings sticks. */
+    readonly installOnFirstLaunch: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
@@ -68,6 +75,7 @@ export const make = Effect.gen(function* () {
   const launcher = DesktopCliShim.launcherPath(environment);
   const binDirectory = path.dirname(launcher);
   const ownedPathMarker = path.join(environment.stateDir, "cli-command-path-entry");
+  const firstLaunchMarker = path.join(environment.stateDir, "cli-command-first-launch");
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
   const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
@@ -161,7 +169,22 @@ export const make = Effect.gen(function* () {
     }
     const first = yield* firstOnPath;
     const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
-    return { supported: true, installedPath: installed.value, onPath, launcherPath, ...shadow };
+    const pathCommand = onPath
+      ? undefined
+      : pathSetupCommand({
+          directory: path.dirname(installed.value),
+          home: environment.homeDirectory,
+          shell: process.env.SHELL,
+          platform: environment.platform,
+        });
+    return {
+      supported: true,
+      installedPath: installed.value,
+      onPath,
+      launcherPath,
+      ...shadow,
+      ...(pathCommand === undefined ? {} : { pathCommand }),
+    };
   }).pipe(
     Effect.orElseSucceed(() => ({
       supported: false,
@@ -253,7 +276,25 @@ export const make = Effect.gen(function* () {
     return yield* state;
   }).pipe(Effect.withSpan("desktop.cliCommand.uninstall"));
 
-  return DesktopCliCommand.of({ state, install, uninstall });
+  const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
+    function* () {
+      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
+      // Mark first so a failed or removed install is never retried behind the user's back.
+      yield* fs.writeFileString(firstLaunchMarker, "");
+      const installed = yield* install;
+      yield* logInfo("installed the t3 command on first launch", {
+        installedPath: installed.installedPath,
+        onPath: installed.onPath,
+      });
+    },
+  ).pipe(
+    Effect.catch((error) =>
+      logWarning("did not install the t3 command on first launch", { error: String(error) }),
+    ),
+    Effect.withSpan("desktop.cliCommand.installOnFirstLaunch"),
+  );
+
+  return DesktopCliCommand.of({ state, install, uninstall, installOnFirstLaunch });
 });
 
 export const layer = Layer.effect(DesktopCliCommand, make);

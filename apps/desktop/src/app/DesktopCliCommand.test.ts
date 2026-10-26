@@ -24,6 +24,7 @@ const environmentFor = (
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
     serverRoot: "/opt/T3 Code/resources/app.asar",
+    appVersion: "1.2.3",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -84,11 +85,15 @@ const fakePowerShell = (initial: string) => {
 };
 
 const machinePath = process.env.PATH;
+const machineShell = process.env.SHELL;
 beforeEach(() => {
   process.env.PATH = "";
+  process.env.SHELL = "/bin/zsh";
 });
 afterEach(() => {
   process.env.PATH = machinePath;
+  if (machineShell === undefined) delete process.env.SHELL;
+  else process.env.SHELL = machineShell;
 });
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
@@ -115,6 +120,25 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.uninstall).installedPath).toBeNull();
       expect(yield* fs.exists(link)).toBe(false);
       expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3"))).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("installs once on first launch and leaves a removed command removed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const command = yield* commandIn({ home });
+      const link = path.join(home, ".local", "bin", "t3");
+
+      yield* command.installOnFirstLaunch;
+      const installed = yield* command.state;
+      expect(installed.installedPath).toBe(link);
+      expect(installed.pathCommand).toBe(`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
+
+      yield* command.uninstall;
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(link)).toBe(false);
     }).pipe(Effect.scoped),
   );
 

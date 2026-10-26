@@ -21,6 +21,7 @@ import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
+import { confirmCliInstall, installCommand, offerCliInstall } from "./cli/install.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
 import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
@@ -80,6 +81,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       threadCommand,
       serviceCommand,
       updateCommand,
+      installCommand,
       uninstallCommand,
       serviceLauncherCommand,
       claudeHistoryCommand,
@@ -99,7 +101,12 @@ export const cli = makeCli();
 export function runCli() {
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
-  Command.run(cli, { version: packageJson.version }).pipe(
+  offerCliInstall({
+    args: process.argv.slice(2),
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    confirm: confirmCliInstall,
+  }).pipe(
+    Effect.andThen(Command.run(cli, { version: packageJson.version })),
     Effect.scoped,
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,
