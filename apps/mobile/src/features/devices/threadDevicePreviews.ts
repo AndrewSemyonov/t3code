@@ -14,6 +14,9 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
         session,
         name: device?.name ?? (session.platform === "ios" ? "iOS Simulator" : "Android Emulator"),
         description: [device?.version, host?.label].filter(Boolean).join(" · "),
+        // Simlock streams take no input; without an operator token there is no stream.
+        viewOnly:
+          host?.kind === "simlock" ? { unavailableReason: host.streamUnavailable } : undefined,
       };
     });
 }

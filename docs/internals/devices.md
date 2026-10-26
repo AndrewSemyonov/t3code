@@ -44,6 +44,25 @@ clients never hold it. Agent config files are written per device
 device before targeting it. Device settings run `simctl` on the simulator's
 machine, which EAS does not expose, so they are unavailable there.
 
+## Simlock hosts lease through the agent-device front
+
+A [Simlock host](../../apps/server/src/device/SimlockDeviceHost.ts) (alpha) opens a
+device by running T3's own agent-device CLI against the gateway's agent-device
+front (`connect proxy`, then `open`), not with Simlock's lease HTTP API:
+agent-device cannot adopt a lease it did not allocate. The lease is bound to
+that one agent-device session and to the directory `open` ran in, so
+`agentEndpoint` hands every thread the same session, a `stateDir` holding its
+connection record, and no `--udid`/`--serial` (the gateway refuses selectors).
+Installs work only from that directory; `device_open` names it.
+
+Simlock's screen stream uses serve-sim's AVCC envelope framing, but Simlock
+serves it to operator tokens only and takes no input. Clients read it through
+the serve-sim `stream.avcc` path on both platforms (`viewOnly` in the stream
+client), and `upstream` maps that path to the worker and device holding the
+lease. Without an operator token the host reports `streamUnavailable`.
+Leases are renewed while tracked and released at the host's age limit; one a
+crashed server left behind ends on its own one TTL later, so there is no ledger.
+
 ## The hub is never exposed
 
 serve-sim has a shell-exec route whose token is readable from its own

@@ -4,6 +4,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { EasDeviceHostsSettings } from "./EasDeviceHostsSettings";
+import { SimlockDeviceHostsSettings } from "./SimlockDeviceHostsSettings";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -826,6 +827,11 @@ function DeviceIntegrationControls({
   const anyHubEnabled = connectedEnvironments.some(
     (environment) => environment.serverConfig?.settings.enableDeviceSupport,
   );
+  const simlockEnabled = connectedEnvironments.some(
+    (environment) =>
+      environment.environmentId === environmentId &&
+      environment.serverConfig?.settings.simlockDeviceHostsEnabled,
+  );
   const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<
@@ -1059,6 +1065,9 @@ function DeviceIntegrationControls({
       ) : null}
       <DeviceHostsSettings environmentId={environmentId} />
       {state.supportsEasHosts ? <EasDeviceHostsSettings environmentId={environmentId} /> : null}
+      {state.supportsSimlockHosts && simlockEnabled ? (
+        <SimlockDeviceHostsSettings environmentId={environmentId} />
+      ) : null}
     </>
   );
 }

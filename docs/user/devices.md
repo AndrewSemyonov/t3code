@@ -123,6 +123,34 @@ installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
 
+## Simlock hosts (alpha)
+
+[Simlock](https://incubator.callstack.com/simlock/) pools iOS simulators and
+Android emulators across machines. If you run a Simlock gateway, T3 can lease
+devices from it. Simlock is new and unreleased, so this integration is an
+alpha: it may change or stop working with a newer Simlock. T3 does not install
+or manage Simlock; set up the gateway and its workers yourself.
+
+Turn on **Settings → Beta → Simlock device hosts (alpha)**, then add the
+gateway in Settings → Integrations → Devices with:
+
+- an **agent token** (`simlock token create --role agent`), which leases and
+  drives devices;
+- optionally an **operator token**, needed only for the live screen in the
+  Device panel, because Simlock streams screens to operator tokens only. An
+  operator token can administer the whole pool, so share it only with an
+  environment you trust.
+
+The picker lists the models your workers can make. Opening one takes a lease;
+closing it with **Return device to the pool**, or removing the host, returns it
+wiped. The panel keeps a watched device leased up to the host's lease limit.
+The screen is view only: agents drive the device through `device_open`, which
+works without an operator token. Workers must run the same agent-device
+version as T3 (see Device tool updates), and agent-device accepts app installs
+for a lease only from the folder it was opened from, which `device_open`
+names. A device cannot reach development servers on your machine through
+localhost; use an address its worker can reach.
+
 ## Device tool updates
 
 The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Devices → Check versions reads installed versions without installing tools or starting devices.

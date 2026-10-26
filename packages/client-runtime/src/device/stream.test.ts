@@ -199,7 +199,11 @@ class MjpegImage extends EventTarget {
   }
 }
 
-function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true) {
+function recoveryFixture(
+  platform: "ios" | "android" = "ios",
+  preferMjpeg = true,
+  viewOnly = false,
+) {
   vi.useFakeTimers();
   const sockets: Socket[] = [];
   class Socket {
@@ -273,6 +277,7 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
     {
       platform,
       preferMjpeg,
+      viewOnly,
       deviceId: "test-device",
       access: {
         httpBase: "https://test/api/device-hub",
@@ -351,6 +356,38 @@ describe("shared device stream readiness and recovery", () => {
     } finally {
       client.stop();
     }
+  });
+
+  it("plays a view-only Android stream from AVCC frames without opening an input socket", async () => {
+    const { client, events, fetch, sockets, videoBodies, decoders, decodedFrame } = recoveryFixture(
+      "android",
+      false,
+      true,
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/stream.avcc",
+    ]);
+    // Simlock adds a JSON meta frame (5) and empty keep-alive frames (6) to serve-sim's envelopes.
+    videoBodies[0]!.enqueue(
+      new Uint8Array([
+        ...envelope(5, [0x7b, 0x7d]),
+        ...envelope(1, [1, 0x64, 0, 0x1f]),
+        ...envelope(6, []),
+        ...envelope(2, [2]),
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.decode).toHaveBeenCalledOnce();
+    decodedFrame();
+    expect(events.onScreen).toHaveBeenCalledWith({
+      width: 400,
+      height: 800,
+      orientation: "portrait",
+    });
+    expect(sockets).toHaveLength(0);
+    client.stop();
   });
 
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {
