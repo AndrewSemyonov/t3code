@@ -1,5 +1,7 @@
-import { and, count, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, count, eq, gt, isNotNull, isNull, ne, notExists, or, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -7,11 +9,14 @@ import * as SqlError from "effect/sql/SqlError";
 
 import * as RelayDb from "../db.ts";
 import {
+  relayEnvironmentLinks,
   relayManagedEndpointAllocations,
   relayManagedTunnelLimits,
 } from "../persistence/schema.ts";
 
 export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
+// Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a tunnel-less row older than this was abandoned.
+export const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
@@ -79,8 +84,14 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError(persistenceError("load-limit")));
         const maxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
+        const pendingCutoff = DateTime.formatIso(
+          DateTime.subtract(yield* DateTime.now, {
+            minutes: MANAGED_TUNNEL_PENDING_WINDOW_MINUTES,
+          }),
+        );
         // Count reservations, not links: links are written only after provisioning creates Cloudflare resources.
-        // Exclude this environment so relinking remains idempotent at the account limit.
+        // Exclude this environment so relinking remains idempotent at the account limit, abandoned
+        // reservations that never got a tunnel, and allocations whose link was revoked or switched off.
         const counted = yield* db
           .select({ activeTunnels: count() })
           .from(relayManagedEndpointAllocations)
@@ -89,6 +100,28 @@ export const make = Effect.gen(function* () {
               eq(relayManagedEndpointAllocations.userId, input.userId),
               ne(relayManagedEndpointAllocations.environmentId, input.environmentId),
               isNull(relayManagedEndpointAllocations.tunnelReleasedAt),
+              or(
+                isNotNull(relayManagedEndpointAllocations.tunnelId),
+                gt(relayManagedEndpointAllocations.updatedAt, pendingCutoff),
+              ),
+              notExists(
+                new QueryBuilder()
+                  .select({ userId: relayEnvironmentLinks.userId })
+                  .from(relayEnvironmentLinks)
+                  .where(
+                    and(
+                      eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
+                      eq(
+                        relayEnvironmentLinks.environmentId,
+                        relayManagedEndpointAllocations.environmentId,
+                      ),
+                      or(
+                        isNotNull(relayEnvironmentLinks.revokedAt),
+                        eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
+                      ),
+                    ),
+                  ),
+              ),
             ),
           )
           .pipe(Effect.mapError(persistenceError("count-tunnels")));
