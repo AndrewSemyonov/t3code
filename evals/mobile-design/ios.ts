@@ -188,20 +188,18 @@ export class Simulator {
     throw new Error("The app did not load from Metro.");
   }
 
-  /** Pairs each environment, waiting until the list shows it before the next, so links never overlap. */
-  async pair(
-    pairings: ReadonlyArray<{ readonly url: string; readonly labels: ReadonlyArray<string> }>,
-  ) {
-    for (const pairing of pairings) {
-      const query = new URLSearchParams({ pairingUrl: pairing.url, autoConnect: "1" });
+  /** Pairs every environment, then waits for the list to show `threadList`. */
+  async pair(pairingUrls: ReadonlyArray<string>, threadList: RegExp) {
+    for (const pairingUrl of pairingUrls) {
+      const query = new URLSearchParams({ pairingUrl, autoConnect: "1" });
       // Pairing runs once per device, so it can wait out a slow host.
       await this.openUrl(`t3code://connections/new?${query}`, 180_000);
-      await this.waitFor(
-        new RegExp(`^(${pairing.labels.map((label) => RegExp.escape(label)).join("|")})`),
-        `${pairing.labels[0]} after pairing`,
-        { timeoutMs: 180_000, offScreen: true },
-      );
+      await delay(4_000);
     }
+    await this.waitFor(threadList, "the paired thread list", {
+      timeoutMs: 180_000,
+      offScreen: true,
+    });
   }
 
   /** iOS asks before a link opens the app; accept the prompt once it shows. */
@@ -215,6 +213,15 @@ export class Simulator {
         () => false,
       );
       if (accepted) return;
+      // The Duo's runner can see the prompt without answering it; its Open button still takes a tap.
+      const snapshot = await this.snapshot().catch(() => null);
+      const open = snapshot?.nodes.some((node) => /^Open in /.test(node.label ?? ""))
+        ? this.find(snapshot, /^Open$/)
+        : undefined;
+      if (open) {
+        await this.press(open);
+        return;
+      }
       await delay(500);
     }
   }
@@ -273,10 +280,22 @@ export class Simulator {
   ): Promise<Snapshot> {
     const { timeoutMs = 20_000, offScreen = false } = options;
     const deadline = Date.now() + timeoutMs;
+    let lastError = "";
     for (;;) {
-      const snapshot = await this.snapshot().catch(() => null);
+      const snapshot = await this.snapshot().catch((error: unknown) => {
+        lastError = error instanceof Error ? error.message : String(error);
+        return null;
+      });
       if (snapshot && this.find(snapshot, label, offScreen)) return snapshot;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what} (${label})`);
+      if (Date.now() > deadline) {
+        const seen = snapshot
+          ? `saw: ${snapshot.nodes
+              .flatMap((node) => (node.label ? [node.label] : []))
+              .slice(0, 8)
+              .join(" | ")}`
+          : `snapshot failed: ${lastError.slice(0, 300)}`;
+        throw new Error(`timed out waiting for ${what} (${seen})`);
+      }
       await delay(750);
     }
   }

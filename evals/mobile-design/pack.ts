@@ -190,6 +190,13 @@ export async function buildPack(input: {
     }
   }
 
+  // Reviewers score only the device classes this run captured.
+  const devices = DEVICE_CLASSES.filter((device) =>
+    input.shots.some(
+      (shot) =>
+        !shot.problem && POSES.some((pose) => pose.id === shot.pose && pose.device === device.id),
+    ),
+  );
   const template = await NodeFSP.readFile(NodePath.join(import.meta.dirname, "brief.md"), "utf8");
   const brief = template
     .replace(
@@ -219,14 +226,14 @@ export async function buildPack(input: {
     )
     .replace(
       "{{DEVICES}}",
-      DEVICE_CLASSES.map((device) => `- \`${device.id}\`: ${device.label}`).join("\n"),
+      devices.map((device) => `- \`${device.id}\`: ${device.label}`).join("\n"),
     )
     .replace(
       "{{JSON}}",
       JSON.stringify(
         {
           scores: Object.fromEntries(
-            DEVICE_CLASSES.map((device) => [
+            devices.map((device) => [
               device.id,
               Object.fromEntries(AXES.map((axis) => [axis.id, 0])),
             ]),

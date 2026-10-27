@@ -1,4 +1,4 @@
-# Design review: T3 Code for iPhone, iPhone Duo and iPad
+# Design review: the T3 Code mobile app
 
 You are a senior product designer. Review the T3 Code mobile app from the screenshots in this pack. This is a read-only review. Do not edit files, start servers, or open browsers or simulators.
 

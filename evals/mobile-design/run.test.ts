@@ -16,11 +16,11 @@ const reply = (value: number, fixes = ["Give the question panel the space above 
 
 describe("parseReviewerReply", () => {
   it("reads the last json block", () => {
-    expect(parseReviewerReply(reply(7)).scores.duo.polish).toBe(7);
+    expect(parseReviewerReply(reply(7)).scores.duo?.polish).toBe(7);
   });
 
-  it("rejects a reply without scores for every device and axis", () => {
-    const partial = JSON.stringify({ scores: { iphone: uniform(7).iphone }, fixes: ["x"] });
+  it("rejects a device scored on only some axes", () => {
+    const partial = JSON.stringify({ scores: { iphone: { visual: 7 } }, fixes: ["x"] });
     expect(() => parseReviewerReply(`\`\`\`json\n${partial}\n\`\`\``)).toThrow();
   });
 
@@ -37,7 +37,17 @@ describe("summarizeRound", () => {
       opus: parseReviewerReply(reply(6)),
       sol: parseReviewerReply(reply(9)),
     });
-    expect(round.medians.ipad.visual).toBe(7.5);
+    expect(round.medians.ipad?.visual).toBe(7.5);
+  });
+
+  it("leaves out devices nobody scored", () => {
+    const iphoneOnly = JSON.stringify({ scores: { iphone: uniform(7).iphone }, fixes: ["x"] });
+    const round = summarizeRound({
+      opus: parseReviewerReply(`\`\`\`json\n${iphoneOnly}\n\`\`\``),
+    });
+    expect(round.medians.iphone?.polish).toBe(7);
+    expect(round.medians.duo).toBeUndefined();
+    expect(renderSummary(round, null)).not.toContain("iPhone Duo");
   });
 
   it("shows deltas against the baseline medians", () => {

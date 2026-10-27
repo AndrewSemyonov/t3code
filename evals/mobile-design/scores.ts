@@ -7,13 +7,12 @@ const DeviceScores = Schema.Struct(
   Object.fromEntries(AXES.map((axis) => [axis.id, Score])) as Record<AxisId, typeof Score>,
 );
 
-/** The JSON block every reviewer ends its reply with (see brief.md). */
+/** The JSON block every reviewer ends its reply with (see brief.md); it scores the captured devices. */
 export const ReviewerScores = Schema.Struct({
   scores: Schema.Struct(
-    Object.fromEntries(DEVICE_CLASSES.map((device) => [device.id, DeviceScores])) as Record<
-      DeviceClassId,
-      typeof DeviceScores
-    >,
+    Object.fromEntries(
+      DEVICE_CLASSES.map((device) => [device.id, Schema.optionalKey(DeviceScores)]),
+    ) as Record<DeviceClassId, Schema.optionalKey<typeof DeviceScores>>,
   ),
   fixes: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
 });
@@ -36,7 +35,7 @@ export function median(values: ReadonlyArray<number>): number {
   return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
-export type Medians = Record<DeviceClassId, Record<AxisId, number>>;
+export type Medians = Partial<Record<DeviceClassId, Record<AxisId, number>>>;
 
 export interface RoundSummary {
   readonly reviewers: Readonly<Record<string, ReviewerScores>>;
@@ -45,17 +44,14 @@ export interface RoundSummary {
 
 export function summarizeRound(reviewers: Readonly<Record<string, ReviewerScores>>): RoundSummary {
   const all = Object.values(reviewers);
-  const medians = Object.fromEntries(
-    DEVICE_CLASSES.map((device) => [
-      device.id,
-      Object.fromEntries(
-        AXES.map((axis) => [
-          axis.id,
-          median(all.map((review) => review.scores[device.id][axis.id])),
-        ]),
-      ),
-    ]),
-  ) as Medians;
+  const medians: Medians = {};
+  for (const device of DEVICE_CLASSES) {
+    const scored = all.flatMap((review) => review.scores[device.id] ?? []);
+    if (scored.length === 0) continue;
+    medians[device.id] = Object.fromEntries(
+      AXES.map((axis) => [axis.id, median(scored.map((scores) => scores[axis.id]))]),
+    ) as Record<AxisId, number>;
+  }
   return { reviewers, medians };
 }
 
@@ -73,15 +69,19 @@ export function renderSummary(round: RoundSummary, baseline: RoundSummary | null
       ? ""
       : `\nThe baseline panel was ${baselineNames.join(", ")}; this round's is ${names.join(", ")}. Read the deltas with that in mind.\n`;
   const header = ["Device", "Axis", "Median", ...names, ...(baseline ? ["Δ baseline"] : [])];
-  const rows = DEVICE_CLASSES.flatMap((device) =>
+  const rows = DEVICE_CLASSES.filter((device) => round.medians[device.id]).flatMap((device) =>
     AXES.map((axis) => {
-      const value = round.medians[device.id][axis.id];
+      const value = round.medians[device.id]![axis.id];
       return [
         device.label,
         axis.label,
         formatScore(value),
-        ...names.map((name) => formatScore(round.reviewers[name]!.scores[device.id][axis.id])),
-        ...(baseline ? [formatDelta(value - baseline.medians[device.id][axis.id])] : []),
+        ...names.map((name) =>
+          formatScore(round.reviewers[name]!.scores[device.id]?.[axis.id] ?? Number.NaN),
+        ),
+        ...(baseline
+          ? [formatDelta(value - (baseline.medians[device.id]?.[axis.id] ?? Number.NaN))]
+          : []),
       ];
     }),
   );
