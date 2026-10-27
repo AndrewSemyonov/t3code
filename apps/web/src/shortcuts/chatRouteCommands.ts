@@ -81,7 +81,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       settings: selectProjectGroupingSettings(getClientSettings()),
       primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
       resolveEnvironmentLabel: () => null,
-    }).length;
+    }).filter((group) => !group.archived).length;
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 

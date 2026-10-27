@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  newThreadNoProjectIndex,
   buildNestedSearchItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -916,5 +917,27 @@ describe("returning from file and content search", () => {
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+describe("newThreadNoProjectIndex", () => {
+  const entry = (pinned = false, isPreferred = false, isScratch = false) => ({
+    pinned,
+    isPreferred,
+    isScratch,
+  });
+
+  it("goes after the pinned projects and the first unpinned one", () => {
+    expect(newThreadNoProjectIndex([entry(true), entry(true), entry(false, true), entry()])).toBe(
+      3,
+    );
+    expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
+      1,
+    );
+  });
+
+  it("keeps a pinned or current scratch project in its own place", () => {
+    expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
+    expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
   });
 });

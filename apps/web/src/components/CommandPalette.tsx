@@ -158,6 +158,7 @@ import {
   buildLinkedThreadActionItems,
   buildCommandPaletteRows,
   enumerateCommandPaletteItems,
+  newThreadNoProjectIndex,
   findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
@@ -784,7 +785,16 @@ function OpenCommandPaletteDialog(props: {
     );
     if (scratchTargetEnvironmentId === null) return projectItems;
 
-    const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
+    const noProjectIndex = newThreadNoProjectIndex(
+      projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
+        isScratch: isScratchProject(
+          targetProject,
+          scratchWorkspaceRootFor(targetProject.environmentId),
+        ),
+        pinned: group.pinned,
+        isPreferred,
+      })),
+    );
     return [
       ...projectItems.slice(0, noProjectIndex),
       {

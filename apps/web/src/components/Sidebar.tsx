@@ -2421,12 +2421,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
+              // An archived project is not a filter choice.
+              projectFilter:
+                threadProjectGroup && !threadProjectGroup.archived
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    }
+                  : null,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -2712,7 +2714,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
-    if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
+    if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, scopeGroups.length)) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -2728,7 +2730,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
+    (scopeGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
@@ -2912,7 +2914,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={projectGroups.length > 1}
+              showNewThreadInProjectHint={scopeGroups.length > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {

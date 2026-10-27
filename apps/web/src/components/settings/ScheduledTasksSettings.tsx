@@ -1124,15 +1124,11 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  // Pinned first. An existing task keeps its project after that project is archived.
-  const projects = allProjects
-    .filter(
-      (project) =>
-        project.environmentId === environmentId &&
-        matchesScheduledTaskScope(scope, environmentId, project.id) &&
-        (project.archivedAt == null || project.id === task?.projectId),
-    )
-    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+  const scopedProjects = allProjects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      matchesScheduledTaskScope(scope, environmentId, project.id),
+  );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -1143,8 +1139,17 @@ function ScheduledTaskEditorForm({
     label: "scheduled task upsert",
   });
   const [draft, setDraft] = useState<DraftState>(() =>
-    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+    task
+      ? taskToDraft(task)
+      : {
+          ...EMPTY_DRAFT,
+          projectId: scopedProjects.find((project) => project.archivedAt == null)?.id ?? "",
+        },
   );
+  // Pinned first. The chosen project stays listed after it is archived.
+  const projects = scopedProjects
+    .filter((project) => project.archivedAt == null || project.id === draft.projectId)
+    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
