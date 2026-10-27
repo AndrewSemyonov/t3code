@@ -37,7 +37,7 @@ export function useScheduledTaskEditor() {
             (member) =>
               member.project.environmentId === environmentId && member.project.id === project.id,
           ),
-        ) ?? environmentProjects[0];
+        ) ?? environmentProjects.find((project) => project.archivedAt == null);
       return createDraft(
         project?.id ?? null,
         scheduledTaskDefaultModel(configs.get(environmentId) ?? null, project ?? null),

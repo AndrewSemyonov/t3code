@@ -984,8 +984,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored key is left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
+  const scopeGroups = pickableProjectGroups(projectGroups);
   const chosenProjectScopeKey = resolveSidebarProjectScopeKey({
-    groups: pickableProjectGroups(projectGroups),
+    groups: scopeGroups,
     key: persistedProjectScopeKey,
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
@@ -993,7 +994,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const chosenProjectGroup =
     chosenProjectScopeKey === null
       ? null
-      : (projectGroups.find((project) => project.projectKey === chosenProjectScopeKey) ?? null);
+      : (scopeGroups.find((project) => project.projectKey === chosenProjectScopeKey) ?? null);
   const chosenScopeProjectKeys =
     chosenProjectGroup === null
       ? null

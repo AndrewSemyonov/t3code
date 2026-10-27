@@ -1124,13 +1124,15 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  // An existing task keeps its project after that project is archived.
-  const projects = allProjects.filter(
-    (project) =>
-      project.environmentId === environmentId &&
-      matchesScheduledTaskScope(scope, environmentId, project.id) &&
-      (project.archivedAt == null || project.id === task?.projectId),
-  );
+  // Pinned first. An existing task keeps its project after that project is archived.
+  const projects = allProjects
+    .filter(
+      (project) =>
+        project.environmentId === environmentId &&
+        matchesScheduledTaskScope(scope, environmentId, project.id) &&
+        (project.archivedAt == null || project.id === task?.projectId),
+    )
+    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
