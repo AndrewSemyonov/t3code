@@ -343,6 +343,7 @@ export const FLOWS = [
       { tap: "^Show a reconnect banner$" },
       { tap: "^Model and reasoning settings" },
       { tap: "^GPT-5.3 Codex" },
+      { tap: "^Save thread settings$", name: "Save" },
     ],
   },
 ] as const satisfies ReadonlyArray<Flow>;

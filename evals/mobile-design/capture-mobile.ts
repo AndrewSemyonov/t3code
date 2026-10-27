@@ -124,6 +124,12 @@ async function captureScene(
   return { pose: pose.id, scene: scene.id, file, ...(problem ? { problem } : {}) };
 }
 
+function scenesFor(pose: Pose, only: ReadonlySet<SceneId> | null): ReadonlyArray<SceneId> {
+  return (pose.scenes ?? SCENES.map((scene) => scene.id)).filter(
+    (scene) => only === null || only.has(scene),
+  );
+}
+
 /** A screen is its title: the text in the top band, where the navigation bar or a sheet header sits. */
 async function screenSignature(simulator: Simulator): Promise<string> {
   const snapshot = await simulator.snapshot();
@@ -254,23 +260,25 @@ export async function captureMobile(input: {
         await seedComposerDrafts(simulator, targets);
         input.log(`${device}: launching`);
         await simulator.launch(`http://127.0.0.1:${metroPort}`);
-        const pairingUrls = await Promise.all(
-          environments.map(async (environment) =>
-            buildShowcasePairingUrl(
+        const pairings = await Promise.all(
+          environments.map(async (environment) => ({
+            url: buildShowcasePairingUrl(
               "127.0.0.1",
               environment.port,
               await issuePairingCredential(environment.baseDir),
             ),
-          ),
+            label: environment.label,
+          })),
         );
-        await simulator.pair(pairingUrls, THREAD_LIST);
+        await simulator.pair(pairings);
         for (const pose of input.poses.filter((candidate) => candidate.device === device)) {
           input.log(`${pose.id}: capturing`);
-          const poseProblem = await simulator.applyPose(pose);
+          // One failed XCTest call marks this pose's shots; it should not cost the other poses.
+          const poseProblem = await simulator
+            .applyPose(pose)
+            .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
           if (poseProblem) input.log(`${pose.id}: ${poseProblem}`);
-          const scenes = (pose.scenes ?? SCENES.map((scene) => scene.id)).filter(
-            (scene) => input.scenes === null || input.scenes.has(scene),
-          );
+          const scenes = scenesFor(pose, input.scenes);
           for (const scene of scenes) {
             const shot = await captureScene(
               simulator,
@@ -286,7 +294,10 @@ export async function captureMobile(input: {
         }
         const flowPose = input.poses.find((pose) => pose.id === "iphone-dark");
         if (input.flows && device === "iphone" && flowPose) {
-          await simulator.applyPose(flowPose);
+          const flowProblem = await simulator
+            .applyPose(flowPose)
+            .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+          if (flowProblem) input.log(`flows: ${flowProblem}`);
           for (const flow of FLOWS) {
             input.log(`flow ${flow.id}`);
             const result = await captureFlow(
@@ -301,8 +312,21 @@ export async function captureMobile(input: {
           }
         }
       } catch (error) {
-        // One device failing should not cost the others their captures.
-        input.log(`${device}: stopped: ${error instanceof Error ? error.message : String(error)}`);
+        // One device failing should not cost the others their captures. Its missing scenes are
+        // recorded as failed, so a reused run directory cannot pack their older screenshots.
+        const problem = `${device} stopped: ${error instanceof Error ? error.message : String(error)}`;
+        input.log(problem);
+        for (const pose of input.poses.filter((candidate) => candidate.device === device)) {
+          for (const scene of scenesFor(pose, input.scenes)) {
+            if (shots.some((shot) => shot.pose === pose.id && shot.scene === scene)) continue;
+            shots.push({
+              pose: pose.id,
+              scene,
+              file: NodePath.join("captures", pose.id, `${scene}.png`),
+              problem,
+            });
+          }
+        }
       } finally {
         await simulator?.delete();
       }

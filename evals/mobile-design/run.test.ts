@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { AXES, DEVICE_CLASSES } from "./cases.ts";
+import { fillTemplate } from "./pack.ts";
 import { median, parseReviewerReply, renderSummary, summarizeRound } from "./scores.ts";
 
 const uniform = (value: number) =>
@@ -67,5 +68,14 @@ describe("summarizeRound", () => {
       muse: parseReviewerReply(reply(8)),
     });
     expect(renderSummary(round, baseline)).toContain("The baseline panel was opus");
+  });
+});
+
+describe("fillTemplate", () => {
+  it("inserts values literally, even replacement patterns from a stopped flow", () => {
+    const flows = "stopped: timed out waiting for '^Plan offline mode$' (saw: Chats)";
+    expect(fillTemplate("{{FLOWS}}\n{{AXES}}", { FLOWS: flows, AXES: "axes" })).toBe(
+      `${flows}\naxes`,
+    );
   });
 });

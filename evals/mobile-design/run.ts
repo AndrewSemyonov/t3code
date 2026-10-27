@@ -7,7 +7,15 @@ import * as NodeUtil from "node:util";
 
 import { captureDesktop, findShot, type DesktopShot } from "./capture-desktop.ts";
 import { captureMobile, type FlowResult, type MobileShot } from "./capture-mobile.ts";
-import { DEFAULT_PANEL, PANEL, POSES, SCENES, type PanelMember, type SceneId } from "./cases.ts";
+import {
+  DEFAULT_PANEL,
+  PANEL,
+  POSES,
+  SCENES,
+  type DeviceClassId,
+  type PanelMember,
+  type SceneId,
+} from "./cases.ts";
 import { buildPack } from "./pack.ts";
 import { parseReviewerReply, renderSummary, summarizeRound, type RoundSummary } from "./scores.ts";
 
@@ -132,6 +140,18 @@ async function summarize() {
         ),
       )
     : null;
+  // A reply that skips a device the pack shows would quietly thin that device's median.
+  const council: { readonly devices?: ReadonlyArray<DeviceClassId> } = await NodeFSP.readFile(
+    NodePath.join(out, "council.json"),
+    "utf8",
+  ).then(
+    (text) => JSON.parse(text),
+    () => ({}),
+  );
+  for (const [name, review] of Object.entries(reviewers)) {
+    const missing = (council.devices ?? []).filter((device) => !review.scores[device]);
+    if (missing.length > 0) throw new Error(`${name}.md does not score ${missing.join(", ")}.`);
+  }
   const round = summarizeRound(reviewers);
   await NodeFSP.writeFile(
     NodePath.join(out, "summary.json"),

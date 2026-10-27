@@ -188,42 +188,48 @@ export class Simulator {
     throw new Error("The app did not load from Metro.");
   }
 
-  /** Pairs every environment, then waits for the list to show `threadList`. */
-  async pair(pairingUrls: ReadonlyArray<string>, threadList: RegExp) {
-    for (const pairingUrl of pairingUrls) {
-      const query = new URLSearchParams({ pairingUrl, autoConnect: "1" });
+  /** Pairs every environment, then checks that each one shows as paired. */
+  async pair(pairings: ReadonlyArray<{ readonly url: string; readonly label: string }>) {
+    for (const pairing of pairings) {
+      const query = new URLSearchParams({ pairingUrl: pairing.url, autoConnect: "1" });
       // Pairing runs once per device, so it can wait out a slow host.
       await this.openUrl(`t3code://connections/new?${query}`, 180_000);
       await delay(4_000);
     }
-    await this.waitFor(threadList, "the paired thread list", {
-      timeoutMs: 180_000,
-      offScreen: true,
-    });
+    // The environments page lists every paired machine, however long the thread list is.
+    await this.openUrl("t3code://settings/environments");
+    for (const pairing of pairings) {
+      await this.waitFor(new RegExp(`^${RegExp.escape(pairing.label)}`), pairing.label, {
+        timeoutMs: 180_000,
+      });
+    }
   }
 
-  /** iOS asks before a link opens the app; accept the prompt once it shows. */
+  /**
+   * Opens a link. Some runtimes ask "Open in …?" first: accept that prompt, or tap its Open
+   * button when the runner sees it but cannot answer. Without a prompt the link opened already.
+   */
   async openUrl(url: string, timeoutMs = 60_000) {
     await simctl("openurl", this.udid, url);
-    // A busy host can take seconds per XCTest call, and the prompt itself can be late.
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    const started = Date.now();
+    while (Date.now() < started + timeoutMs) {
       const accepted = await this.agent(["alert", "accept"]).then(
         () => true,
         () => false,
       );
       if (accepted) return;
-      // The Duo's runner can see the prompt without answering it; its Open button still takes a tap.
       const snapshot = await this.snapshot().catch(() => null);
-      const open = snapshot?.nodes.some((node) => /^Open in /.test(node.label ?? ""))
-        ? this.find(snapshot, /^Open$/)
-        : undefined;
+      const prompted = snapshot?.nodes.some((node) => /^Open in /.test(node.label ?? ""));
+      const open = snapshot && prompted ? this.find(snapshot, /^Open$/) : undefined;
       if (open) {
         await this.press(open);
         return;
       }
+      // A prompt shows within a second or two; a clean screen after that means none is coming.
+      if (snapshot && !prompted && Date.now() - started > 4_000) return;
       await delay(500);
     }
+    throw new Error(`no one answered the prompt to open ${url.split("?")[0]}`);
   }
 
   async agent(args: ReadonlyArray<string>, timeoutMs = 180_000): Promise<Record<string, unknown>> {
@@ -401,13 +407,9 @@ export class Simulator {
       return width > height;
     };
     if ((await isLandscape()) === (shape === "landscape")) return shape === "landscape";
-    for (const name of shape === "landscape"
-      ? ["landscape-left", "landscape-right"]
-      : ["portrait"]) {
-      await this.agent(["orientation", name]);
-      await delay(2_000);
-      if ((await isLandscape()) === (shape === "landscape")) return shape === "landscape";
-    }
+    // screenshot() turns a portrait frame by 270°, which matches landscape-left only.
+    await this.agent(["orientation", shape === "landscape" ? "landscape-left" : "portrait"]);
+    await delay(2_000);
     // A portrait-locked app keeps its shape when the device turns; the capture shows that.
     return isLandscape();
   }

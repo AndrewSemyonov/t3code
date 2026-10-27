@@ -83,6 +83,11 @@ function shapeGroup(pose: Pose): string {
   return `ipad-${pose.orientation}`;
 }
 
+/** Fills `{{KEY}}` placeholders. A replacer function inserts values literally, so `$'` stays text. */
+export function fillTemplate(template: string, values: Readonly<Record<string, string>>): string {
+  return template.replaceAll(/\{\{(\w+)\}\}/g, (match, key: string) => values[key] ?? match);
+}
+
 export interface PackEntry {
   readonly file: string;
   readonly scene: string;
@@ -198,52 +203,40 @@ export async function buildPack(input: {
     ),
   );
   const template = await NodeFSP.readFile(NodePath.join(import.meta.dirname, "brief.md"), "utf8");
-  const brief = template
-    .replace(
-      "{{SCREENS}}",
-      entries
-        .filter((entry) => entry.view !== "flow")
-        .map((entry) => `- \`${entry.file}\`: ${entry.scene} (${entry.view})`)
-        .join("\n"),
-    )
-    .replace(
-      "{{FLOWS}}",
+  const values: Record<string, string> = {
+    SCREENS: entries
+      .filter((entry) => entry.view !== "flow")
+      .map((entry) => `- \`${entry.file}\`: ${entry.scene} (${entry.view})`)
+      .join("\n"),
+    FLOWS:
       flowRows.length > 0
         ? ["| Task | Taps | Screens | Filmstrip |", "| --- | --- | --- | --- |", ...flowRows].join(
             "\n",
           )
         : "No flows were captured this round.",
-    )
-    .replace(
-      "{{REFERENCES}}",
+    REFERENCES:
       referenceImages.length > 0
         ? referenceImages.map((name) => `- \`references/${name}\``).join("\n")
         : "No reference screenshots of the Codex or Claude iOS apps are in this pack. Judge that axis from what you know of those apps, and say so.",
-    )
-    .replace(
-      "{{AXES}}",
-      AXES.map((axis) => `- \`${axis.id}\`: **${axis.label}**: ${axis.description}.`).join("\n"),
-    )
-    .replace(
-      "{{DEVICES}}",
-      devices.map((device) => `- \`${device.id}\`: ${device.label}`).join("\n"),
-    )
-    .replace(
-      "{{JSON}}",
-      JSON.stringify(
-        {
-          scores: Object.fromEntries(
-            devices.map((device) => [
-              device.id,
-              Object.fromEntries(AXES.map((axis) => [axis.id, 0])),
-            ]),
-          ),
-          fixes: ["…", "…", "…", "…", "…"],
-        },
-        null,
-        2,
-      ),
-    );
+    AXES: AXES.map((axis) => `- \`${axis.id}\`: **${axis.label}**: ${axis.description}.`).join(
+      "\n",
+    ),
+    DEVICES: devices.map((device) => `- \`${device.id}\`: ${device.label}`).join("\n"),
+    JSON: JSON.stringify(
+      {
+        scores: Object.fromEntries(
+          devices.map((device) => [
+            device.id,
+            Object.fromEntries(AXES.map((axis) => [axis.id, 0])),
+          ]),
+        ),
+        fixes: ["…", "…", "…", "…", "…"],
+      },
+      null,
+      2,
+    ),
+  };
+  const brief = fillTemplate(template, values);
   const briefFile = NodePath.join(pack, "brief.md");
   await NodeFSP.writeFile(briefFile, brief);
   await NodeFSP.writeFile(
@@ -252,6 +245,7 @@ export async function buildPack(input: {
       {
         brief: briefFile,
         scores: NodePath.join(input.outDirectory, "scores"),
+        devices: devices.map((device) => device.id),
         panel: input.panel.map((member) => ({ member, ...PANEL[member] })),
       },
       null,

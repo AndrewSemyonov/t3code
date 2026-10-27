@@ -115,7 +115,10 @@ export async function captureDesktop(input: {
         ],
         { allowFailure: true, timeoutMs: 120_000 },
       );
-      const problem = result.code === 0 ? undefined : result.stderr.trim().split("\n")[0];
+      const problem =
+        result.code === 0
+          ? undefined
+          : result.stderr.trim().split("\n")[0] || `shot exited with code ${result.code}`;
       if (problem) input.log(`desktop/${scene.id}: ${problem}`);
       shots.push({ scene: scene.id, file, ...(problem ? { problem } : {}) });
     }
