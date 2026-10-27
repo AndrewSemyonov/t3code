@@ -15,7 +15,7 @@ import {
 } from "../persistence/schema.ts";
 
 export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
-// Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a tunnel-less row older than this was abandoned.
+// Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
 export const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
 
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
@@ -90,8 +90,8 @@ export const make = Effect.gen(function* () {
           }),
         );
         // Count reservations, not links: links are written only after provisioning creates Cloudflare resources.
-        // Exclude this environment so relinking remains idempotent at the account limit, abandoned
-        // reservations that never got a tunnel, and allocations whose link was revoked or switched off.
+        // A row counts while recently reserved (provisioning may be in flight) or while it holds a live tunnel
+        // for a link that is neither revoked nor publish-only. Exclude this environment so relinking stays idempotent.
         const counted = yield* db
           .select({ activeTunnels: count() })
           .from(relayManagedEndpointAllocations)
@@ -99,28 +99,30 @@ export const make = Effect.gen(function* () {
             and(
               eq(relayManagedEndpointAllocations.userId, input.userId),
               ne(relayManagedEndpointAllocations.environmentId, input.environmentId),
-              isNull(relayManagedEndpointAllocations.tunnelReleasedAt),
               or(
-                isNotNull(relayManagedEndpointAllocations.tunnelId),
                 gt(relayManagedEndpointAllocations.updatedAt, pendingCutoff),
-              ),
-              notExists(
-                new QueryBuilder()
-                  .select({ userId: relayEnvironmentLinks.userId })
-                  .from(relayEnvironmentLinks)
-                  .where(
-                    and(
-                      eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
-                      eq(
-                        relayEnvironmentLinks.environmentId,
-                        relayManagedEndpointAllocations.environmentId,
+                and(
+                  isNotNull(relayManagedEndpointAllocations.tunnelId),
+                  isNull(relayManagedEndpointAllocations.tunnelReleasedAt),
+                  notExists(
+                    new QueryBuilder()
+                      .select({ userId: relayEnvironmentLinks.userId })
+                      .from(relayEnvironmentLinks)
+                      .where(
+                        and(
+                          eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
+                          eq(
+                            relayEnvironmentLinks.environmentId,
+                            relayManagedEndpointAllocations.environmentId,
+                          ),
+                          or(
+                            isNotNull(relayEnvironmentLinks.revokedAt),
+                            eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
+                          ),
+                        ),
                       ),
-                      or(
-                        isNotNull(relayEnvironmentLinks.revokedAt),
-                        eq(relayEnvironmentLinks.managedTunnelsEnabled, false),
-                      ),
-                    ),
                   ),
+                ),
               ),
             ),
           )

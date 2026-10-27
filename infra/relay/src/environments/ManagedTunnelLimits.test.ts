@@ -96,28 +96,34 @@ describe("ManagedTunnelLimits", () => {
     );
   });
 
-  it.effect("stops counting tunnel-less reservations after the pending window", () => {
-    const countConditions: Array<unknown> = [];
-    const now = DateTime.makeUnsafe("2026-10-27T12:00:00.000Z");
+  it.effect(
+    "counts reservations only within the pending window unless they hold a live tunnel",
+    () => {
+      const countConditions: Array<unknown> = [];
+      const now = DateTime.makeUnsafe("2026-10-27T12:00:00.000Z");
 
-    return Effect.gen(function* () {
-      yield* TestClock.setTime(now.epochMilliseconds);
-      const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
-      yield* limits.withCapacity({ userId: "user-1", environmentId: "environment-1" }, Effect.void);
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(now.epochMilliseconds);
+        const limits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+        yield* limits.withCapacity(
+          { userId: "user-1", environmentId: "environment-1" },
+          Effect.void,
+        );
 
-      const query = new PgDialect().sqlToQuery(countConditions[0] as never);
-      expect(query.sql).toContain(
-        '("relay_managed_endpoint_allocations"."tunnel_id" is not null)) or ("relay_managed_endpoint_allocations"."updated_at" > $3)',
-      );
-      expect(query.params[2]).toBe("2026-10-27T11:45:00.000Z");
-      expect(query.sql).toContain("not exists");
-      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is not null');
-    }).pipe(
-      Effect.provide(
-        ManagedTunnelLimits.layer.pipe(
-          Layer.provide(Layer.succeed(RelayDb.RelayDb, makeFakeDb([], countConditions))),
+        const query = new PgDialect().sqlToQuery(countConditions[0] as never);
+        const sqlText = query.sql.replaceAll(/[()]/g, "");
+        expect(sqlText).toContain(
+          '"relay_managed_endpoint_allocations"."updated_at" > $3 or "relay_managed_endpoint_allocations"."tunnel_id" is not null and "relay_managed_endpoint_allocations"."tunnel_released_at" is null and not exists',
+        );
+        expect(query.params[2]).toBe("2026-10-27T11:45:00.000Z");
+        expect(sqlText).toContain('"relay_environment_links"."revoked_at" is not null');
+      }).pipe(
+        Effect.provide(
+          ManagedTunnelLimits.layer.pipe(
+            Layer.provide(Layer.succeed(RelayDb.RelayDb, makeFakeDb([], countConditions))),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 });
