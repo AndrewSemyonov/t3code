@@ -92,6 +92,13 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedError<Platform
   }
 }
 
+export function savedEnvironmentAddressError(label: string) {
+  return new ConnectionBlockedError({
+    reason: "configuration",
+    detail: `That address claims to be ${label}, which is already saved. Add it as a route from that environment's settings instead.`,
+  });
+}
+
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
@@ -560,10 +567,7 @@ export const make = Effect.gen(function* () {
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
           if (options?.refuseNewRoute === true && sameAddress === undefined) {
-            return yield* new ConnectionBlockedError({
-              reason: "configuration",
-              detail: `That address claims to be ${previous.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
-            });
+            return yield* savedEnvironmentAddressError(previous.target.label);
           }
           const routes = existing.filter(
             (existing) =>

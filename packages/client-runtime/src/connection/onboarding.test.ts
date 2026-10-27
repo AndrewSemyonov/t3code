@@ -155,10 +155,13 @@ function layerPairingHttp(
   return RpcHttp.layerRemoteHttpClient(fetchFn);
 }
 
-function layerPairingOnboarding(options?: Parameters<typeof layerPairingHttp>[1]) {
+function layerPairingOnboarding(
+  options?: Parameters<typeof layerPairingHttp>[1],
+  calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
-    layerPairingHttp([], options),
+    layerPairingHttp(calls, options),
     Layer.mock(Persistence.ConnectionTargetStore)({
       list: Effect.succeed([]),
       listDisabled: Effect.succeed([]),
@@ -295,8 +298,9 @@ describe("connection onboarding", () => {
     }).pipe(Effect.provide(layerPairingOnboarding())),
   );
 
-  it.effect("refuses a pairing link that claims a saved environment from a new address", () =>
-    Effect.gen(function* () {
+  it.effect("refuses a pairing link that claims a saved environment from a new address", () => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    return Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const onboarding = yield* Onboarding.ConnectionOnboarding;
       const before = yield* registerSwitchedOffEnvironment;
@@ -307,8 +311,11 @@ describe("connection onboarding", () => {
 
       expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
       expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
-    }).pipe(Effect.provide(layerPairingOnboarding())),
-  );
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://attacker.example.test/.well-known/t3/environment",
+      ]);
+    }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+  });
 
   it.effect("adds a new address as a route when pairing targets that environment", () =>
     Effect.gen(function* () {

@@ -32,7 +32,7 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
-import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
+import { connectionRoutes, hasRouteToHttpBaseUrl, routeEntry, sshTargetKey } from "./routes.ts";
 
 export interface PairingConnectionInput {
   readonly pairingUrl?: string;
@@ -112,6 +112,20 @@ export const preparePairingRegistration = Effect.fn(
     descriptor.environmentId !== input.expectedEnvironmentId
   ) {
     return yield* differentMachineError(descriptor.label);
+  }
+  if (input.expectedEnvironmentId === undefined) {
+    const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
+    const saved = Option.isSome(registry)
+      ? (yield* SubscriptionRef.get(registry.value.entries)).get(descriptor.environmentId)
+      : undefined;
+    // Mirrors the guard in `register`, which stays authoritative; platform entries ignore pairing.
+    if (
+      saved !== undefined &&
+      saved.target._tag !== "PrimaryConnectionTarget" &&
+      !hasRouteToHttpBaseUrl(saved, target.httpBaseUrl)
+    ) {
+      return yield* EnvironmentRegistry.savedEnvironmentAddressError(saved.target.label);
+    }
   }
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
   // An outdated server is still saved so it can be updated from this client.
