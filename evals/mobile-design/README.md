@@ -4,7 +4,7 @@ Scores the design of the T3 Code iOS app on iPhone, iPhone Duo and iPad. Code ca
 
 A run captures:
 
-- **Scenes**: every screen in `SCENES` (`cases.ts`), on each pose in `POSES`. The poses are iPhone 17 Pro dark and light, the largest accessibility text size and landscape; iPhone Duo closed and open; and iPad Pro 13 in landscape and portrait. Dark poses capture the full set; light poses capture a smaller set. A scene's `source` names the complaint it guards, when there is one.
+- **Scenes**: every screen in `SCENES` (`cases.ts`), on each pose in `POSES`. The poses are iPhone 17 Pro dark and light, the largest accessibility text size and landscape; iPhone Duo closed and open; and iPad Pro 13 in landscape and portrait. Every pose captures every scene, except the large-text and landscape passes, which capture a few. A scene's `source` names the complaint it guards, when there is one.
 - **Desktop pairs**: the same data in the desktop web app at 1440×900, next to the iPad and iPhone captures.
 - **Flows**: common tasks walked step by step on the dark iPhone, with the taps and distinct screens each took.
 
@@ -32,6 +32,8 @@ Mobile capture needs macOS with Xcode, and a simulator runtime with the iPhone D
 
    `summary.md` has the median per axis and device class, each reviewer's scores, the change against the baseline, and each reviewer's top five fixes.
 
+To split the work across Macs, for example when only one has the Duo runtime, run each with its own `--pose` list, then copy the `captures/` folders into one run, join the `shots` lists in their `captures.json`, and build the pack with `--pack`.
+
 Other flags: `--pose <id>` and `--case <scene id>` capture a subset, `--no-flows` skips the flows, `--pack` rebuilds the pack from earlier captures. `captures/captures.json` lists any scene that did not reach its ready state; look at those screenshots before you send the pack.
 
 ## Blind review
@@ -48,4 +50,4 @@ Add it to `SCENES` or `FLOWS` in `cases.ts`, with its `source`. Steps open deep 
 
 ## Time and cost
 
-A full capture on an M-series Mac takes about 45 minutes: about 15 minutes per device class, plus desktop pairs. A council round is two `xhigh` reviews of about 80 images.
+A full capture on an idle M-series Mac takes about 90 minutes: about 30 minutes per device class, plus 5 for desktop pairs. On a busy host it can take twice that. A council round is two `xhigh` reviews of about 115 images.

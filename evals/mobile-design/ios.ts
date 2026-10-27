@@ -129,7 +129,7 @@ export class Simulator {
     try {
       await suppressIosSystemFollowUps(udid);
       await simctl("boot", udid);
-      await simctl("bootstatus", udid, "-b");
+      await run("xcrun", ["simctl", "bootstatus", udid, "-b"], { timeoutMs: 600_000 });
     } catch (error) {
       await simulator.delete();
       throw error;
@@ -176,11 +176,11 @@ export class Simulator {
         metroUrl,
       );
       // The first snapshot attaches the agent-device session, which can take minutes.
-      await this.agent(["open", BUNDLE_ID], 600_000);
+      await this.agent(["open", BUNDLE_ID], 600_000).catch(() => undefined);
       const snapshot = await this.waitFor(
         new RegExp(`${loaded.source}|^Reload$`),
         "the app to load",
-        180_000,
+        { timeoutMs: 180_000 },
       ).catch(() => null);
       if (snapshot && this.find(snapshot, loaded)) return;
       if (snapshot) await this.tap(/^Reload$/).catch(() => undefined);
@@ -197,8 +197,7 @@ export class Simulator {
       await this.waitFor(
         new RegExp(`^${RegExp.escape(pairing.label)}$`),
         `${pairing.label} after pairing`,
-        180_000,
-        true,
+        { timeoutMs: 180_000, offScreen: true },
       );
     }
   }
@@ -268,9 +267,9 @@ export class Simulator {
   async waitFor(
     label: RegExp,
     what: string,
-    timeoutMs = 20_000,
-    offScreen = false,
+    options: { readonly timeoutMs?: number; readonly offScreen?: boolean } = {},
   ): Promise<Snapshot> {
+    const { timeoutMs = 20_000, offScreen = false } = options;
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const snapshot = await this.snapshot().catch(() => null);
@@ -348,23 +347,32 @@ export class Simulator {
     throw new Error("could not return to the thread list");
   }
 
-  /** Applies the pose's system settings to the running app. */
-  async applyPose(pose: Pose) {
+  /**
+   * Applies the pose's system settings to the running app. Returns why the app is not in the
+   * pose's shape, when it is not, so its shots stay out of the pack.
+   */
+  async applyPose(pose: Pose): Promise<string | undefined> {
     await simctl("ui", this.udid, "appearance", pose.appearance);
     await simctl("ui", this.udid, "content_size", pose.textSize ?? "large");
     if (pose.fold) {
-      // agent-device verifies a fold by a hinge-angle read, which fails when the Duo is already in
-      // that pose; the screenshot of that pose's display shows whether it took.
+      // agent-device verifies a fold by a hinge-angle read, which fails when the Duo is already
+      // in that pose, so check the app's shape instead.
       await this.agent(["fold", pose.fold]).catch(() => undefined);
       await delay(2_500);
+      const { width, height } = (await this.snapshot()).viewport;
+      this.appLandscape = width > height;
+      if (this.appLandscape !== (pose.fold === "open")) return `the Duo did not ${pose.fold}`;
+      return undefined;
     }
-    // A fold sets the Duo's shape itself.
-    this.appLandscape = pose.fold
-      ? pose.fold === "open"
-      : await this.orient(pose.orientation ?? "portrait");
+    const shape = pose.orientation ?? "portrait";
+    this.appLandscape = await this.orient(shape);
+    // A portrait-locked iPhone is the finding; anything else that keeps its shape is a failure.
+    if (this.appLandscape !== (shape === "landscape") && this.device !== "iphone") {
+      return `the ${this.device} did not rotate to ${shape}`;
+    }
+    return undefined;
   }
 
-  /** agent-device names rotations from the natural orientation, so try each until the shape fits. */
   /** Returns whether the app now lays out in landscape. */
   private async orient(shape: "portrait" | "landscape"): Promise<boolean> {
     const isLandscape = async () => {

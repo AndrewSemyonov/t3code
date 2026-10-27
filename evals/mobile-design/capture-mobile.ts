@@ -101,19 +101,23 @@ async function captureScene(
   sceneId: SceneId,
   targets: LinkTargets,
   outDirectory: string,
+  poseProblem: string | undefined,
 ): Promise<MobileShot> {
   const scene = SCENES.find((candidate) => candidate.id === sceneId)!;
   const file = NodePath.join("captures", pose.id, `${scene.id}.png`);
-  let problem: string | undefined;
+  let problem = poseProblem;
   try {
     await simulator.home(THREAD_LIST);
     for (const step of scene.steps) await simulator.perform(step, targets);
     if ("ready" in scene) await simulator.waitFor(new RegExp(scene.ready), scene.title);
   } catch (error) {
-    problem = error instanceof Error ? error.message : String(error);
+    problem ??= error instanceof Error ? error.message : String(error);
   }
+  // Screenshot a failed scene too: where it stopped is the diagnosis.
   await delay(1_500);
-  await simulator.screenshot(NodePath.join(outDirectory, file), pose);
+  await simulator.screenshot(NodePath.join(outDirectory, file), pose).catch((error: unknown) => {
+    problem ??= `screenshot failed: ${error instanceof Error ? error.message : String(error)}`;
+  });
   if ("reset" in scene) {
     for (const step of scene.reset) await simulator.perform(step, targets).catch(() => undefined);
   }
@@ -144,7 +148,9 @@ async function captureFlow(
     const file = NodePath.join("captures", "flows", flow.id, `${frames.length}.png`);
     await delay(1_200);
     await simulator.screenshot(NodePath.join(outDirectory, file), pose);
-    signatures.add(await screenSignature(simulator).catch(() => action));
+    // A failed snapshot says nothing about the screen, so it adds no signature.
+    const signature = await screenSignature(simulator).catch(() => null);
+    if (signature !== null) signatures.add(signature);
     frames.push({ file, action });
   };
   try {
@@ -261,12 +267,20 @@ export async function captureMobile(input: {
         await simulator.pair(pairings);
         for (const pose of input.poses.filter((candidate) => candidate.device === device)) {
           input.log(`${pose.id}: capturing`);
-          await simulator.applyPose(pose);
+          const poseProblem = await simulator.applyPose(pose);
+          if (poseProblem) input.log(`${pose.id}: ${poseProblem}`);
           const scenes = (pose.scenes ?? SCENES.map((scene) => scene.id)).filter(
             (scene) => input.scenes === null || input.scenes.has(scene),
           );
           for (const scene of scenes) {
-            const shot = await captureScene(simulator, pose, scene, targets, input.outDirectory);
+            const shot = await captureScene(
+              simulator,
+              pose,
+              scene,
+              targets,
+              input.outDirectory,
+              poseProblem,
+            );
             if (shot.problem) input.log(`${pose.id}/${scene}: ${shot.problem}`);
             shots.push(shot);
           }
