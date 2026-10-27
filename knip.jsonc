@@ -28,6 +28,8 @@
         "fixtures/*/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
+        // Showcase servers launch it as their Codex binary, through a shell shim.
+        "mobile-showcase-provider.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
         "smoke-desktop-app.ts",

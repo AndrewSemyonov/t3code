@@ -8,6 +8,7 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 | ------------------------------- | ------------------------------------------------------------ |
 | [mcp-tool-use](mcp-tool-use/)   | Whether agents use T3's MCP tools correctly in fake threads. |
 | [thread-titles](thread-titles/) | Whether generated thread titles name the right subject.      |
+| [mobile-design](mobile-design/) | How a model council scores the iOS app's design.             |
 
 ## Run an eval
 

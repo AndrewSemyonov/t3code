@@ -1,0 +1,92 @@
+import * as Schema from "effect/Schema";
+
+import { AXES, DEVICE_CLASSES, type AxisId, type DeviceClassId } from "./cases.ts";
+
+const Score = Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 10 }));
+const DeviceScores = Schema.Struct(
+  Object.fromEntries(AXES.map((axis) => [axis.id, Score])) as Record<AxisId, typeof Score>,
+);
+
+/** The JSON block every reviewer ends its reply with (see brief.md). */
+export const ReviewerScores = Schema.Struct({
+  scores: Schema.Struct(
+    Object.fromEntries(DEVICE_CLASSES.map((device) => [device.id, DeviceScores])) as Record<
+      DeviceClassId,
+      typeof DeviceScores
+    >,
+  ),
+  fixes: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+});
+export type ReviewerScores = typeof ReviewerScores.Type;
+
+const decodeScores = Schema.decodeUnknownSync(Schema.fromJsonString(ReviewerScores));
+
+/** Reads the last fenced JSON block of a reviewer's reply. */
+export function parseReviewerReply(reply: string): ReviewerScores {
+  const blocks = [...reply.matchAll(/```json\s*\n([\s\S]*?)```/g)];
+  const last = blocks.at(-1)?.[1];
+  if (!last) throw new Error("The reply has no ```json block.");
+  return decodeScores(last);
+}
+
+export function median(values: ReadonlyArray<number>): number {
+  if (values.length === 0) return Number.NaN;
+  const sorted = values.toSorted((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+export type Medians = Record<DeviceClassId, Record<AxisId, number>>;
+
+export interface RoundSummary {
+  readonly reviewers: Readonly<Record<string, ReviewerScores>>;
+  readonly medians: Medians;
+}
+
+export function summarizeRound(reviewers: Readonly<Record<string, ReviewerScores>>): RoundSummary {
+  const all = Object.values(reviewers);
+  const medians = Object.fromEntries(
+    DEVICE_CLASSES.map((device) => [
+      device.id,
+      Object.fromEntries(
+        AXES.map((axis) => [
+          axis.id,
+          median(all.map((review) => review.scores[device.id][axis.id])),
+        ]),
+      ),
+    ]),
+  ) as Medians;
+  return { reviewers, medians };
+}
+
+const formatScore = (value: number) => (Number.isNaN(value) ? "–" : value.toFixed(1));
+const formatDelta = (value: number) =>
+  Number.isNaN(value) ? "–" : value === 0 ? "0.0" : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
+
+/** The summary table: one row per device and axis, with deltas when a baseline is given. */
+export function renderSummary(round: RoundSummary, baseline: Medians | null): string {
+  const names = Object.keys(round.reviewers);
+  const header = ["Device", "Axis", "Median", ...names, ...(baseline ? ["Δ baseline"] : [])];
+  const rows = DEVICE_CLASSES.flatMap((device) =>
+    AXES.map((axis) => {
+      const value = round.medians[device.id][axis.id];
+      return [
+        device.label,
+        axis.label,
+        formatScore(value),
+        ...names.map((name) => formatScore(round.reviewers[name]!.scores[device.id][axis.id])),
+        ...(baseline ? [formatDelta(value - baseline[device.id][axis.id])] : []),
+      ];
+    }),
+  );
+  const table = [header, header.map(() => "---"), ...rows]
+    .map((row) => `| ${row.join(" | ")} |`)
+    .join("\n");
+  const fixes = names
+    .map(
+      (name) =>
+        `### ${name}\n\n${round.reviewers[name]!.fixes.map((fix, index) => `${index + 1}. ${fix}`).join("\n")}`,
+    )
+    .join("\n\n");
+  return `# Mobile design scores\n\n${table}\n\n## Top fixes\n\n${fixes}\n`;
+}
