@@ -1143,12 +1143,25 @@ function ScheduledTaskEditorForm({
       ? taskToDraft(task)
       : {
           ...EMPTY_DRAFT,
-          projectId: scopedProjects.find((project) => project.archivedAt == null)?.id ?? "",
+          // Pinned first; a Settings scope on an archived project still offers it.
+          projectId:
+            (
+              scopedProjects.find(
+                (project) => project.pinnedAt != null && project.archivedAt == null,
+              ) ??
+              scopedProjects.find((project) => project.archivedAt == null) ??
+              scopedProjects[0]
+            )?.id ?? "",
         },
   );
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
-    .filter((project) => project.archivedAt == null || project.id === draft.projectId)
+    .filter(
+      (project) =>
+        project.archivedAt == null ||
+        project.id === draft.projectId ||
+        project.id === task?.projectId,
+    )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const submissionPending = useRef(false);
   const editingTaskMissing =

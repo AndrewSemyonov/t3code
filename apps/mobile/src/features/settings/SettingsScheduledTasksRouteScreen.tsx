@@ -670,7 +670,9 @@ function TaskForm({
     .filter(
       (project) =>
         project.environmentId === environmentId &&
-        (project.archivedAt == null || project.id === draft.projectId),
+        (project.archivedAt == null ||
+          project.id === draft.projectId ||
+          project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
