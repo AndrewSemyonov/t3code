@@ -182,14 +182,19 @@ export class Simulator {
     throw new Error("The app did not load from Metro.");
   }
 
-  async pair(pairingUrls: ReadonlyArray<string>, firstThreadTitle: RegExp) {
-    for (const pairingUrl of pairingUrls) {
-      const query = new URLSearchParams({ pairingUrl, autoConnect: "1" });
+  /** Pairs each environment, waiting until its threads list it before the next, so links never overlap. */
+  async pair(pairings: ReadonlyArray<{ readonly url: string; readonly label: string }>) {
+    for (const pairing of pairings) {
+      const query = new URLSearchParams({ pairingUrl: pairing.url, autoConnect: "1" });
       // Pairing runs once per device, so it can wait out a slow host.
       await this.openUrl(`t3code://connections/new?${query}`, 180_000);
-      await delay(4_000);
+      await this.waitFor(
+        new RegExp(`^${RegExp.escape(pairing.label)}$`),
+        `${pairing.label} after pairing`,
+        180_000,
+        true,
+      );
     }
-    await this.waitFor(firstThreadTitle, "the paired thread list", 180_000);
   }
 
   /** iOS asks before a link opens the app; accept the prompt once it shows. */
@@ -243,20 +248,27 @@ export class Simulator {
     return data as unknown as Snapshot;
   }
 
-  find(snapshot: Snapshot, label: RegExp): SnapshotNode | undefined {
+  /** The first element labelled `label`; `offScreen` also accepts rows scrolled out of view. */
+  find(snapshot: Snapshot, label: RegExp, offScreen = false): SnapshotNode | undefined {
     const onScreen = (node: SnapshotNode) =>
-      node.rect !== undefined &&
-      node.rect.y + node.rect.height > 0 &&
-      node.rect.y < snapshot.viewport.height;
+      offScreen ||
+      (node.rect !== undefined &&
+        node.rect.y + node.rect.height > 0 &&
+        node.rect.y < snapshot.viewport.height);
     const matches = snapshot.nodes.filter((node) => label.test(node.label ?? "") && onScreen(node));
     return matches.find((node) => node.hittable) ?? matches[0];
   }
 
-  async waitFor(label: RegExp, what: string, timeoutMs = 20_000): Promise<Snapshot> {
+  async waitFor(
+    label: RegExp,
+    what: string,
+    timeoutMs = 20_000,
+    offScreen = false,
+  ): Promise<Snapshot> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const snapshot = await this.snapshot().catch(() => null);
-      if (snapshot && this.find(snapshot, label)) return snapshot;
+      if (snapshot && this.find(snapshot, label, offScreen)) return snapshot;
       if (Date.now() > deadline) throw new Error(`timed out waiting for ${what} (${label})`);
       await delay(750);
     }
@@ -278,13 +290,13 @@ export class Simulator {
   }
 
   /** The composer is a native text view with no label: the lowest editable field on screen. */
-  async focusComposer() {
+  private async composer(): Promise<SnapshotNode> {
     const snapshot = await this.snapshot();
     const composer = snapshot.nodes
       .filter((node) => (node.kind === "text-view" || node.kind === "text-field") && node.rect)
       .toSorted((a, b) => b.rect!.y - a.rect!.y)[0];
     if (!composer) throw new Error("no composer on screen");
-    await this.press(composer);
+    return composer;
   }
 
   async perform(step: StepAction, targets: LinkTargets) {
@@ -292,7 +304,8 @@ export class Simulator {
     else if ("tap" in step) await this.tap(new RegExp(step.tap));
     else if ("type" in step) await this.agent(["type", step.type]);
     else if ("scroll" in step) await this.agent(["scroll", step.scroll]);
-    else await this.focusComposer();
+    else if ("focus" in step) await this.press(await this.composer());
+    else await this.agent(["fill", `@${(await this.composer()).ref}`, ""]);
     await delay(1_200);
   }
 
@@ -314,12 +327,12 @@ export class Simulator {
         await delay(600);
         return;
       }
-      // Another tab, such as Settings, shows no back button; its tab bar returns to Chats.
+      // Another tab, such as Settings, shows no back button; the tab bar or side rail returns to Chats.
       const chatsTab = snapshot.nodes.find(
         (node) =>
           node.kind === "button" &&
           node.label === "Chats" &&
-          (node.rect?.y ?? 0) > snapshot.viewport.height * 0.75,
+          (node.rect?.y ?? 0) >= snapshot.viewport.height / 4,
       );
       if (back) await this.press(back);
       else if (chatsTab) await this.press(chatsTab);
@@ -334,7 +347,9 @@ export class Simulator {
     await simctl("ui", this.udid, "appearance", pose.appearance);
     await simctl("ui", this.udid, "content_size", pose.textSize ?? "large");
     if (pose.fold) {
-      await this.agent(["fold", pose.fold]);
+      // agent-device verifies a fold by a hinge-angle read, which fails when the Duo is already in
+      // that pose; the screenshot of that pose's display shows whether it took.
+      await this.agent(["fold", pose.fold]).catch(() => undefined);
       await delay(2_500);
     }
     // A fold sets the Duo's shape itself.
@@ -355,7 +370,7 @@ export class Simulator {
       await delay(2_000);
       if (await fits()) return;
     }
-    throw new Error(`could not rotate to ${shape}`);
+    // A portrait-locked app keeps its shape when the device turns; the capture shows that.
   }
 
   async screenshot(destination: string, pose: Pose) {

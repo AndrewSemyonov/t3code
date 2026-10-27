@@ -96,6 +96,7 @@ export async function buildPack(input: {
 }): Promise<{ readonly brief: string }> {
   const pack = NodePath.join(input.outDirectory, "pack");
   await NodeFSP.rm(pack, { recursive: true, force: true });
+  await NodeFSP.mkdir(pack, { recursive: true });
   const at = (file: string) => NodePath.join(input.outDirectory, file);
   const entries: PackEntry[] = [];
 

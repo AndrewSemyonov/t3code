@@ -1,7 +1,8 @@
 /**
  * Steps: `link` opens `t3code://<path>`, where `{thread:<id>}` becomes `<environmentId>/<threadId>`
  * for a seeded or live fixture thread; `tap` presses the first element whose accessibility label
- * matches the regex; `focus: "composer"` taps the unlabelled composer.
+ * matches the regex, shown in flows as its `name` when it has one; `focus: "composer"` taps the
+ * unlabelled composer.
  */
 
 export const AXES = [
@@ -55,10 +56,11 @@ export const SIMULATORS = {
 
 export type StepAction =
   | { readonly link: string }
-  | { readonly tap: string }
+  | { readonly tap: string; readonly name?: string }
   | { readonly type: string }
   | { readonly scroll: "up" | "down" }
-  | { readonly focus: "composer" };
+  | { readonly focus: "composer" }
+  | { readonly clear: "composer" };
 
 export interface Pose {
   readonly id: string;
@@ -84,6 +86,8 @@ export interface Scene {
   readonly ready?: string;
   /** Desktop web path for the "conforms to desktop" pair, relative to the environment origin. */
   readonly desktop?: { readonly path: string; readonly click?: string };
+  /** Runs after the screenshot, to undo state later scenes would see, such as a typed draft. */
+  readonly reset?: ReadonlyArray<StepAction>;
 }
 
 const REQUEST = "Mobile design eval request";
@@ -160,6 +164,7 @@ export const SCENES = [
     title: "Slash suggestions while the agent runs",
     source: `${REQUEST}; #16112 (running pill over slash suggestions)`,
     steps: [thread("streaming"), { focus: "composer" }, { type: "/" }],
+    reset: [{ clear: "composer" }],
   },
   {
     id: "new-thread",
@@ -243,7 +248,7 @@ export const POSES = [
   {
     id: "iphone-landscape",
     device: "iphone",
-    label: "iPhone, landscape",
+    label: "iPhone held in landscape",
     appearance: "dark",
     orientation: "landscape",
     scenes: ["threads", "thread-tool-calls"],
@@ -289,7 +294,7 @@ export const FLOWS = [
       { tap: "^React$" },
       { tap: "^Choose environment" },
       // Pick whichever machine the picker offers; when it is not the project's, the frames show it.
-      { tap: "^(Suspense Station|Moonbase Terminal|Kernel Cabin)" },
+      { tap: "^(Suspense Station|Moonbase Terminal|Kernel Cabin)", name: "the offered machine" },
       { focus: "composer" },
       { type: "Add a loading skeleton to the profile page" },
       { tap: "^Send$" },

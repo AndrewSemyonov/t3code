@@ -114,6 +114,9 @@ async function captureScene(
   }
   await delay(1_500);
   await simulator.screenshot(NodePath.join(outDirectory, file), pose);
+  if ("reset" in scene) {
+    for (const step of scene.reset) await simulator.perform(step, targets).catch(() => undefined);
+  }
   return { pose: pose.id, scene: scene.id, file, ...(problem ? { problem } : {}) };
 }
 
@@ -151,14 +154,16 @@ async function captureFlow(
       await simulator.perform(step, targets);
       const action =
         "tap" in step
-          ? `Tap ${step.tap.replaceAll(/[\^$]/g, "")}`
+          ? `Tap ${step.name ?? step.tap.replaceAll(/[\^$]/g, "")}`
           : "type" in step
             ? `Type "${step.type}"`
             : "focus" in step
               ? "Tap the composer"
-              : "link" in step
-                ? `Open ${step.link}`
-                : `Scroll ${step.scroll}`;
+              : "clear" in step
+                ? "Clear the composer"
+                : "link" in step
+                  ? `Open ${step.link}`
+                  : `Scroll ${step.scroll}`;
       await frame(action);
     }
   } catch (error) {
@@ -242,16 +247,17 @@ export async function captureMobile(input: {
         await seedComposerDrafts(simulator, targets);
         input.log(`${device}: launching`);
         await simulator.launch(`http://127.0.0.1:${metroPort}`);
-        const pairingUrls = await Promise.all(
-          environments.map(async (environment) =>
-            buildShowcasePairingUrl(
+        const pairings = await Promise.all(
+          environments.map(async (environment) => ({
+            url: buildShowcasePairingUrl(
               "127.0.0.1",
               environment.port,
               await issuePairingCredential(environment.baseDir),
             ),
-          ),
+            label: environment.label,
+          })),
         );
-        await simulator.pair(pairingUrls, THREAD_LIST);
+        await simulator.pair(pairings);
         for (const pose of input.poses.filter((candidate) => candidate.device === device)) {
           input.log(`${pose.id}: capturing`);
           await simulator.applyPose(pose);
@@ -280,6 +286,9 @@ export async function captureMobile(input: {
             flows.push(result);
           }
         }
+      } catch (error) {
+        // One device failing should not cost the others their captures.
+        input.log(`${device}: stopped: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         await simulator.delete();
       }
