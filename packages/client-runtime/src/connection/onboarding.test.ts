@@ -169,14 +169,12 @@ function layerPairingOnboarding(
     Layer.mock(Persistence.ConnectionRegistrationStore)({
       register: () => Effect.void,
       setEnabled: () => Effect.void,
-      remove: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
       get: () => Effect.succeedNone,
       put: () => Effect.void,
-      remove: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
     Layer.succeed(
@@ -381,64 +379,55 @@ describe("connection onboarding", () => {
       ),
   );
 
-  it.effect("leaves a platform-managed environment untouched when its id is paired", () =>
-    Effect.gen(function* () {
-      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* Onboarding.ConnectionOnboarding;
-      yield* registry.registerPlatform(
-        new PrimaryConnectionRegistration({
-          target: new PrimaryConnectionTarget({
-            environmentId: PAIRED_ENVIRONMENT_ID,
-            label: "Host environment",
-            httpBaseUrl: "http://127.0.0.1:3773",
-            wsBaseUrl: "ws://127.0.0.1:3773",
-          }),
+  it.effect.each([
+    {
+      kind: "primary",
+      registration: new PrimaryConnectionRegistration({
+        target: new PrimaryConnectionTarget({
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          label: "Host environment",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
         }),
-      );
-      yield* registry.setCompatibility(PAIRED_ENVIRONMENT_ID, UNSUPPORTED_ERROR);
-      const before = yield* SubscriptionRef.get(registry.entries);
-      expect(before.get(PAIRED_ENVIRONMENT_ID)).toMatchObject({
-        enabled: true,
-        unsupportedReason: UNSUPPORTED_ERROR.message,
-      });
-
-      const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
-
-      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
-      const after = yield* SubscriptionRef.get(registry.entries);
-      expect(after).toEqual(before);
-      expect(after.get(PAIRED_ENVIRONMENT_ID)?.unsupportedReason).toBe(UNSUPPORTED_ERROR.message);
-    }).pipe(Effect.provide(layerPairingOnboarding())),
-  );
-
-  it.effect("leaves a platform-managed bearer environment untouched when paired elsewhere", () =>
-    Effect.gen(function* () {
-      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* Onboarding.ConnectionOnboarding;
-      yield* registry.reconcilePlatform([
-        new BearerConnectionRegistration({
-          target: new BearerConnectionTarget({
-            environmentId: PAIRED_ENVIRONMENT_ID,
-            connectionId: "platform:wsl",
-            label: "WSL",
-          }),
-          profile: new BearerConnectionProfile({
-            ...PAIRED_PROFILE,
-            connectionId: "platform:wsl",
-            label: "WSL",
-            httpBaseUrl: "http://127.0.0.1:4000",
-            wsBaseUrl: "ws://127.0.0.1:4000",
-          }),
-          credential: new BearerConnectionCredential({ token: "platform-token" }),
+      }),
+    },
+    {
+      kind: "bearer",
+      registration: new BearerConnectionRegistration({
+        target: new BearerConnectionTarget({
+          environmentId: PAIRED_ENVIRONMENT_ID,
+          connectionId: "platform:wsl",
+          label: "WSL",
         }),
-      ]);
-      const before = yield* SubscriptionRef.get(registry.entries);
+        profile: new BearerConnectionProfile({
+          ...PAIRED_PROFILE,
+          connectionId: "platform:wsl",
+          label: "WSL",
+          httpBaseUrl: "http://127.0.0.1:4000",
+          wsBaseUrl: "ws://127.0.0.1:4000",
+        }),
+        credential: new BearerConnectionCredential({ token: "platform-token" }),
+      }),
+    },
+  ] as const)(
+    "leaves a platform-managed $kind environment untouched when its id is paired",
+    ({ registration }) =>
+      Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
+        yield* registry.reconcilePlatform([registration]);
+        yield* registry.setCompatibility(PAIRED_ENVIRONMENT_ID, UNSUPPORTED_ERROR);
+        const before = yield* SubscriptionRef.get(registry.entries);
+        expect(before.get(PAIRED_ENVIRONMENT_ID)).toMatchObject({
+          enabled: true,
+          unsupportedReason: UNSUPPORTED_ERROR.message,
+        });
 
-      const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
+        const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
 
-      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
-      expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
-    }).pipe(Effect.provide(layerPairingOnboarding())),
+        expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
+        expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
+      }).pipe(Effect.provide(layerPairingOnboarding())),
   );
 
   it.effect("leaves a switched-off environment unchanged when the pairing exchange fails", () =>
