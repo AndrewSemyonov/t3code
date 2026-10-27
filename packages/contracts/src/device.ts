@@ -78,13 +78,8 @@ export const SimlockDeviceHostConfig = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** The gateway's origin, such as https://gateway.example.ts.net:4700. */
   gatewayUrl: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/[^\s/]+\/?$/)),
-  /** Leases and drives devices. Kept in the secret store. */
+  /** Leases, drives, watches, and takes input on its own leases. Kept in the secret store. */
   agentToken: TrimmedString.pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed("")),
-    Schema.annotateKey({ settingsSecret: true }),
-  ),
-  /** Simlock streams screens to operator tokens only; without one there is no live view. */
-  operatorToken: TrimmedString.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -197,8 +192,6 @@ const EasDeviceHostSummary = Schema.Struct({
 const SimlockDeviceHostSummary = Schema.Struct({
   ...deviceHostSummaryFields,
   kind: Schema.Literal("simlock"),
-  /** Set when the host has no operator token, so its devices have no live view. */
-  streamUnavailable: Schema.optional(Schema.String),
 });
 export const DeviceHostSummary = Schema.Union([
   MachineDeviceHostSummary,

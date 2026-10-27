@@ -23,7 +23,6 @@ const config = (overrides: Partial<SimlockDeviceHostConfig> = {}): SimlockDevice
   label: "Device pool",
   gatewayUrl: `${GATEWAY}/`,
   agentToken: "agent-token",
-  operatorToken: "operator-token",
   maxLeases: 2,
   maxLeaseMinutes: 60,
   ...overrides,
@@ -63,7 +62,7 @@ const fakePool = (options: { readonly failOpen?: boolean } = {}) =>
         if (url.pathname === "/v1/catalog") return json(CATALOG);
         if (url.pathname.endsWith("/renew")) return json({}, renewStatus);
         if (request.method === "DELETE") return json({}, 202);
-        return json({ lease: { deviceId: "dev_1", workerId: "worker-a" } });
+        return json({}, 404);
       }),
     );
     const runner = ProcessRunner.ProcessRunner.of({
@@ -143,7 +142,7 @@ const makeHost = (
   );
 
 describe("Simlock device host", () => {
-  it.effect("leases a pool device for agents and streams it from the worker that holds it", () =>
+  it.effect("leases a pool device for agents and serves its screen and input to the panel", () =>
     Effect.gen(function* () {
       const pool = yield* fakePool();
       const fs = yield* FileSystem.FileSystem;
@@ -192,12 +191,28 @@ describe("Simlock device host", () => {
           new URLSearchParams(),
         ),
       ).toEqual({
-        url: `${GATEWAY}/v1/stream/workers/worker-a/devices/dev_1`,
-        headers: { authorization: "Bearer operator-token" },
+        url: `${GATEWAY}/v1/leases/lease-1/stream`,
+        headers: { authorization: "Bearer agent-token" },
+        protocols: [],
+      });
+      expect(
+        yield* ready.upstream!(
+          "/vendor/serve-sim/helper/ws",
+          new URLSearchParams({ device: "lease-1" }),
+        ),
+      ).toEqual({
+        url: `${GATEWAY}/v1/leases/lease-1/input`,
+        headers: { authorization: "Bearer agent-token" },
         protocols: [],
       });
       expect(
         yield* ready.upstream!("/vendor/serve-sim/helper/lease-1/config", new URLSearchParams()),
+      ).toBeNull();
+      expect(
+        yield* ready.upstream!(
+          "/vendor/serve-sim/helper/ws",
+          new URLSearchParams({ device: "lease-2" }),
+        ),
       ).toBeNull();
       expect([...(yield* ready.devices.screenshot({ ...catalog[1]!, id: leaseId }))]).toEqual([
         1, 2, 3,
@@ -211,21 +226,14 @@ describe("Simlock device host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("never streams without an operator token and caps leases at the limit", () =>
+  it.effect("caps leases at the limit", () =>
     Effect.gen(function* () {
       const pool = yield* fakePool();
       const scope = yield* Scope.make();
-      const host = yield* makeHost(pool, config({ operatorToken: "", maxLeases: 1 }), scope);
+      const host = yield* makeHost(pool, config({ maxLeases: 1 }), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
-      expect(yield* host.summary).toHaveProperty("streamUnavailable");
       const [iphone] = (yield* ready.devices.list).devices;
-      const leaseId = yield* ready.devices.boot(iphone!);
-      expect(
-        yield* ready.upstream!(
-          `/vendor/serve-sim/helper/${leaseId}/stream.avcc`,
-          new URLSearchParams(),
-        ),
-      ).toBeNull();
+      yield* ready.devices.boot(iphone!);
 
       const refused = yield* ready.devices.boot(iphone!).pipe(Effect.flip);
       expect(refused.message).toContain("limited to 1 device");

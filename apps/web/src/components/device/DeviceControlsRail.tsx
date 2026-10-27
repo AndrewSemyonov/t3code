@@ -46,8 +46,8 @@ export function DeviceControlsRail(props: {
   onFloat: () => void;
   onClose: () => void;
   onPowerOff: () => void;
-  /** The stream takes no input and the host runs no device commands (Simlock). */
-  viewOnly?: boolean;
+  /** The host takes input but runs no device commands (Simlock): no rotation, settings, tools, or screenshots. */
+  inputOnly?: boolean;
 }) {
   const { view, handle, controls } = props;
   const popupSide = "left";
@@ -61,75 +61,75 @@ export function DeviceControlsRail(props: {
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
-        {props.viewOnly ? null : (
+        <RailButton
+          tooltipSide={popupSide}
+          label="Home"
+          disabled={inputDisabled}
+          onClick={() => handle?.pressButton("home")}
+        >
+          <Home />
+        </RailButton>
+        {props.platform === "android" ? (
           <>
             <RailButton
               tooltipSide={popupSide}
-              label="Home"
+              label="Back"
               disabled={inputDisabled}
-              onClick={() => handle?.pressButton("home")}
+              onClick={() => handle?.pressButton("back")}
             >
-              <Home />
+              <ChevronLeft />
             </RailButton>
-            {props.platform === "android" ? (
-              <>
-                <RailButton
-                  tooltipSide={popupSide}
-                  label="Back"
-                  disabled={inputDisabled}
-                  onClick={() => handle?.pressButton("back")}
+            <RailButton
+              tooltipSide={popupSide}
+              label="Recents"
+              disabled={inputDisabled}
+              onClick={() => handle?.pressButton("recents")}
+            >
+              <Square />
+            </RailButton>
+            {props.inputOnly ? null : (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="Rotate device"
+                      disabled={controls.disabled}
+                    />
+                  }
                 >
-                  <ChevronLeft />
-                </RailButton>
-                <RailButton
-                  tooltipSide={popupSide}
-                  label="Recents"
-                  disabled={inputDisabled}
-                  onClick={() => handle?.pressButton("recents")}
-                >
-                  <Square />
-                </RailButton>
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="Rotate device"
-                        disabled={controls.disabled}
-                      />
+                  <RotateCcw />
+                </MenuTrigger>
+                <MenuPopup side={popupSide}>
+                  <MenuItem
+                    onClick={() => void controls.act({ type: "setOrientation", value: "portrait" })}
+                  >
+                    Portrait
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() =>
+                      void controls.act({ type: "setOrientation", value: "landscape_left" })
                     }
                   >
-                    <RotateCcw />
-                  </MenuTrigger>
-                  <MenuPopup side={popupSide}>
-                    <MenuItem
-                      onClick={() =>
-                        void controls.act({ type: "setOrientation", value: "portrait" })
-                      }
-                    >
-                      Portrait
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() =>
-                        void controls.act({ type: "setOrientation", value: "landscape_left" })
-                      }
-                    >
-                      Landscape
-                    </MenuItem>
-                  </MenuPopup>
-                </Menu>
-              </>
-            ) : (
-              <RailButton
-                tooltipSide={popupSide}
-                label="Rotate device"
-                disabled={inputDisabled || !!view.keyboard?.attached}
-                onClick={() => handle?.rotate()}
-              >
-                <RotateCcw />
-              </RailButton>
+                    Landscape
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
             )}
+          </>
+        ) : props.inputOnly ? null : (
+          <RailButton
+            tooltipSide={popupSide}
+            label="Rotate device"
+            disabled={inputDisabled || !!view.keyboard?.attached}
+            onClick={() => handle?.rotate()}
+          >
+            <RotateCcw />
+          </RailButton>
+        )}
+        {props.inputOnly ? null : (
+          <>
             <RailDivider />
             <RailButton
               tooltipSide={popupSide}
@@ -192,15 +192,17 @@ export function DeviceControlsRail(props: {
             >
               <SlidersHorizontal />
             </RailButton>
-            <RailButton
-              tooltipSide={popupSide}
-              label={props.screenshotPending ? "Capturing screenshot" : "Save screenshot"}
-              disabled={!view.streaming || props.screenshotPending}
-              onClick={props.onScreenshot}
-            >
-              <Camera />
-            </RailButton>
           </>
+        )}
+        {props.inputOnly ? null : (
+          <RailButton
+            tooltipSide={popupSide}
+            label={props.screenshotPending ? "Capturing screenshot" : "Save screenshot"}
+            disabled={!view.streaming || props.screenshotPending}
+            onClick={props.onScreenshot}
+          >
+            <Camera />
+          </RailButton>
         )}
         <Menu>
           <MenuTrigger
@@ -227,7 +229,7 @@ export function DeviceControlsRail(props: {
             <MenuSeparator />
             <MenuItem variant="destructive" onClick={props.onPowerOff}>
               <Power />
-              {props.viewOnly ? "Return device to the pool" : "Power off device"}
+              {props.inputOnly ? "Return device to the pool" : "Power off device"}
             </MenuItem>
           </MenuPopup>
         </Menu>

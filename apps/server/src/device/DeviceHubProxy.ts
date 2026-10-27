@@ -79,11 +79,13 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   protocols: ReadonlyArray<string> = [],
+  headers: Readonly<Record<string, string>> = {},
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
     openTimeout: "10 seconds",
     ...(protocols.length > 0 ? { protocols: [...protocols] } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers: { ...headers } } : {}),
   }).pipe(Effect.provide(NodeSocket.layerWebSocketConstructor));
   yield* Effect.scoped(
     Effect.gen(function* () {
@@ -194,7 +196,12 @@ const handler = Effect.gen(function* () {
   }
   const upstreamUrl = routed?.url ?? `${ready.hub.origin}${hubPath}${search}`;
   if (upgrade) {
-    return yield* proxyWebSocket(request, upstreamUrl.replace(/^http/, "ws"), routed?.protocols);
+    return yield* proxyWebSocket(
+      request,
+      upstreamUrl.replace(/^http/, "ws"),
+      routed?.protocols,
+      routed?.headers,
+    );
   }
   return yield* proxyHttp(request, upstreamUrl, routed?.headers);
 });

@@ -18,36 +18,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
-        <SettingsRow
-          serverScoped
-          {...searchableSetting("simlock-hosts")}
-          settingKeys={["simlockDeviceHostsEnabled"]}
-          description={
-            <>
-              Let the Device panel lease simulators and emulators from your own{" "}
-              <a
-                href="https://incubator.callstack.com/simlock/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                Simlock
-              </a>{" "}
-              pool, added under Integrations. An alpha that may change or break. T3 Code never
-              installs Simlock.
-            </>
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["simlockDeviceHostsEnabled"]}
-              checked={settings.simlockDeviceHostsEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
-              }
-              aria-label="Simlock device hosts"
-            />
-          }
-        />
+        <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -129,6 +100,43 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function SimlockHostsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("simlock-hosts")}
+      settingKeys={["simlockDeviceHostsEnabled"]}
+      description={
+        <>
+          Let the Device panel lease simulators and emulators from your own{" "}
+          <a
+            href="https://incubator.callstack.com/simlock/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            Simlock
+          </a>{" "}
+          pool, added under Integrations. An alpha that may change or break. T3 Code never installs
+          Simlock.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["simlockDeviceHostsEnabled"]}
+          checked={settings.simlockDeviceHostsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
+          }
+          aria-label="Simlock device hosts"
         />
       }
     />

@@ -13,7 +13,6 @@ export const newSimlockDeviceHost = (id: string): SimlockDeviceHostConfigType =>
   label: "Simlock",
   gatewayUrl: "",
   agentToken: "",
-  operatorToken: "",
   maxLeases: 2,
   maxLeaseMinutes: 60,
 });

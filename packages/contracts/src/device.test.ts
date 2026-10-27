@@ -49,7 +49,7 @@ describe("configured device hosts", () => {
 
   it("marks the EAS access token as a secret setting", () => {
     expect(secretSettingsFields(EasDeviceHostConfig)).toEqual(["accessToken"]);
-    expect(secretSettingsFields(SimlockDeviceHostConfig)).toEqual(["agentToken", "operatorToken"]);
+    expect(secretSettingsFields(SimlockDeviceHostConfig)).toEqual(["agentToken"]);
   });
 });
 
@@ -64,7 +64,7 @@ describe("device state for clients from before EAS hosts", () => {
     hosts: [
       { ...summary, id: "local", kind: "local" as const },
       { ...summary, id: "eas", kind: "eas" as const },
-      { ...summary, id: "pool", kind: "simlock" as const, streamUnavailable: "No operator token." },
+      { ...summary, id: "pool", kind: "simlock" as const },
     ],
     hostStatus: "ready" as const,
     hostStatuses: {},

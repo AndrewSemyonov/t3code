@@ -55,11 +55,13 @@ that one agent-device session and to the directory `open` ran in, so
 connection record, and no `--udid`/`--serial` (the gateway refuses selectors).
 Installs work only from that directory; `device_open` names it.
 
-Simlock's screen stream uses serve-sim's AVCC envelope framing, but Simlock
-serves it to operator tokens only and takes no input. Clients read it through
-the serve-sim `stream.avcc` path on both platforms (`viewOnly` in the stream
-client), and `upstream` maps that path to the worker and device holding the
-lease. Without an operator token the host reports `streamUnavailable`.
+Simlock serves a lease's screen and input to its holder in serve-sim's formats
+on both platforms: AVCC envelopes at `/v1/leases/<id>/stream` and serve-sim's
+input messages at `/v1/leases/<id>/input`, both with the agent token. Clients
+therefore treat a Simlock Android lease like iOS (`serveSimOnly` in the stream
+client), and `upstream` maps serve-sim's `stream.avcc` and `helper/ws` paths to
+those routes. Simlock has no MJPEG, screenshot, or host command routes, so the
+panel offers only input there.
 Leases are renewed while tracked and released at the host's age limit; one a
 crashed server left behind ends on its own one TTL later, so there is no ledger.
 

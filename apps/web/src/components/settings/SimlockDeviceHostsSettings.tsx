@@ -173,9 +173,6 @@ function SimlockDeviceHostEditor(props: {
   const [agentToken, setAgentToken] = useState<TokenState>(
     props.host.agentToken ? { kind: "saved" } : { kind: "cleared" },
   );
-  const [operatorToken, setOperatorToken] = useState<TokenState>(
-    props.host.operatorToken ? { kind: "saved" } : { kind: "cleared" },
-  );
   const tokenValue = (token: TokenState, saved: string) =>
     token.kind === "saved" ? saved : token.kind === "new" ? token.value : "";
   const next: SimlockDeviceHostConfig = {
@@ -183,7 +180,6 @@ function SimlockDeviceHostEditor(props: {
     label: draft.label.trim(),
     gatewayUrl: draft.gatewayUrl.trim(),
     agentToken: tokenValue(agentToken, props.host.agentToken),
-    operatorToken: tokenValue(operatorToken, props.host.operatorToken),
   };
   const problem = simlockDeviceHostProblem(next);
 
@@ -267,19 +263,10 @@ function SimlockDeviceHostEditor(props: {
               onChange={setAgentToken}
               help={
                 <>
-                  Leases and drives devices. Create one with{" "}
+                  Leases, drives, and streams devices. Create one with{" "}
                   <code>simlock token create --role agent</code>.
                 </>
               }
-            />
-            <SimlockTokenField
-              label="Operator token"
-              placeholder="Optional"
-              token={operatorToken}
-              hasSaved={props.host.operatorToken !== ""}
-              busy={props.busy}
-              onChange={setOperatorToken}
-              help="Only for the live screen in the Device panel: Simlock streams screens to operator tokens alone. An operator token can manage the whole pool, so add one only if you need the live view."
             />
             <div className="grid grid-cols-2 gap-3 text-sm">
               {limit("maxLeases", "Devices at once", 1, 20)}

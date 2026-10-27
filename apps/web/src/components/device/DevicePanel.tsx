@@ -238,11 +238,7 @@ export function DevicePanel(props: {
               environmentId={environmentId}
               device={activeDevice}
               hostLabel={activeHost?.label ?? "Device host"}
-              viewOnly={
-                activeHost?.kind === "simlock"
-                  ? { unavailableReason: activeHost.streamUnavailable }
-                  : undefined
-              }
+              simlock={activeHost?.kind === "simlock"}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }

@@ -40,6 +40,7 @@ const COMMAND_TIMEOUT = Duration.minutes(2);
 const RENEW_INTERVAL = Duration.minutes(2);
 const LEASE_TTL_MS = 10 * 60_000;
 const STREAM_PATH = /^\/vendor\/serve-sim\/helper\/([^/]+)\/stream\.avcc$/;
+const INPUT_PATH = "/vendor/serve-sim/helper/ws";
 
 const Catalog = Schema.Struct({
   platforms: Schema.Array(
@@ -52,11 +53,6 @@ const Catalog = Schema.Struct({
   ),
 });
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
-const decodeLease = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    lease: Schema.Struct({ deviceId: Schema.String, workerId: Schema.String }),
-  }),
-);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
 );
@@ -77,8 +73,6 @@ interface Lease {
   readonly dir: string;
   readonly configPath: string;
   readonly installDirectory: string;
-  readonly workerId: string;
-  readonly simlockDeviceId: string;
 }
 
 const catalogId = (platform: DevicePlatform, model: string) => `simlock:${platform}:${model}`;
@@ -346,10 +340,6 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
           Effect.flatMap(decodeSessionRecord),
           Effect.mapError((cause) => unavailable("agent-device recorded no Simlock lease.", cause)),
         );
-      const lease = yield* request("GET", `/v1/leases/${encodeURIComponent(record.leaseId)}`).pipe(
-        Effect.flatMap(decodeLease),
-        Effect.mapError((cause) => unavailable("Could not read the Simlock lease.", cause)),
-      );
       const opened: Lease = {
         leaseId: record.leaseId,
         platform: target.platform,
@@ -359,8 +349,6 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         dir,
         configPath,
         installDirectory,
-        workerId: lease.lease.workerId,
-        simlockDeviceId: lease.lease.deviceId,
       };
       leases.set(opened.leaseId, opened);
       yield* FiberMap.run(keepAlive, opened.leaseId, renewLoop(opened));
@@ -391,6 +379,20 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const leaseFor = (deviceId: string) => Option.fromNullishOr(leases.get(deviceId));
   const operationError = (operation: string) => (cause: unknown) =>
     new DeviceOperationError({ operation, reason: "request_failed", cause });
+
+  const screenshotLease = Effect.fn("SimlockDeviceHost.screenshot")(
+    function* (lease: Lease) {
+      const file = path.join(
+        lease.dir,
+        `screenshot-${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16)}.png`,
+      );
+      yield* agentDevice(lease, ["screenshot", file]);
+      return yield* fs
+        .readFile(file)
+        .pipe(Effect.ensuring(fs.remove(file, { force: true }).pipe(Effect.ignore)));
+    },
+    Effect.mapError(operationError("screenshot")),
+  );
 
   const devices: DeviceHost.DeviceOperations = {
     list: loadCatalog.pipe(
@@ -429,17 +431,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       Option.match(leaseFor(device.id), {
         onNone: () =>
           Effect.fail(operationError("screenshot")(new Error("The Simlock lease has ended"))),
-        onSome: (lease) =>
-          Effect.gen(function* () {
-            const file = path.join(
-              lease.dir,
-              `screenshot-${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16)}.png`,
-            );
-            yield* agentDevice(lease, ["screenshot", file]);
-            return yield* fs
-              .readFile(file)
-              .pipe(Effect.ensuring(fs.remove(file, { force: true }).pipe(Effect.ignore)));
-          }).pipe(Effect.mapError(operationError("screenshot"))),
+        onSome: screenshotLease,
       }),
     agentEndpoint: (deviceId) =>
       Option.match(leaseFor(deviceId), {
@@ -457,22 +449,28 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     endsDevices: true,
   };
 
-  /** Only the screen stream exists; the client reads it like serve-sim's AVCC stream. */
-  const upstream: NonNullable<DeviceHost.DeviceHostReady["upstream"]> = (hubPath) =>
+  /**
+   * The client speaks serve-sim to every Simlock lease: its AVCC stream and its input
+   * socket map to the lease's own stream and input routes, which take the agent token.
+   */
+  const upstream: NonNullable<DeviceHost.DeviceHostReady["upstream"]> = (hubPath, search) =>
     Effect.sync(() => {
-      const match = STREAM_PATH.exec(hubPath);
-      if (!match || !config.operatorToken) return null;
-      let deviceId: string;
+      const stream = STREAM_PATH.exec(hubPath);
+      let deviceId: string | null;
       try {
-        deviceId = decodeURIComponent(match[1]!);
+        deviceId = stream
+          ? decodeURIComponent(stream[1]!)
+          : hubPath === INPUT_PATH
+            ? search.get("device")
+            : null;
       } catch {
         return null;
       }
-      const lease = leases.get(deviceId);
+      const lease = deviceId === null ? undefined : leases.get(deviceId);
       if (!lease) return null;
       return {
-        url: `${gateway}/v1/stream/workers/${encodeURIComponent(lease.workerId)}/devices/${encodeURIComponent(lease.simlockDeviceId)}`,
-        headers: { authorization: `Bearer ${config.operatorToken}` },
+        url: `${gateway}/v1/leases/${encodeURIComponent(lease.leaseId)}/${stream ? "stream" : "input"}`,
+        headers: { authorization: `Bearer ${config.agentToken}` },
         protocols: [],
       };
     });
@@ -522,9 +520,6 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     ],
     hubInstalled: true,
     agentDeviceInstalled: true,
-    ...(config.operatorToken
-      ? {}
-      : { streamUnavailable: "Add an operator token in Settings to watch this host's screens." }),
   });
 
   return DeviceHost.DeviceHost.of({
@@ -533,8 +528,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     summary,
     platformAvailability,
     ensureReady,
-    ensureAgentReady: (onPhase) =>
-      ensureReady(onPhase).pipe(Effect.map((value) => ({ ...value, agentDevice: null }))),
+    ensureAgentReady: Effect.fn("SimlockDeviceHost.ensureAgentReady")(function* (onPhase) {
+      return { ...(yield* ensureReady(onPhase)), agentDevice: null };
+    }),
     current: Effect.sync(() => ready),
     stopAgent: Effect.void,
     stop: stopAll,
