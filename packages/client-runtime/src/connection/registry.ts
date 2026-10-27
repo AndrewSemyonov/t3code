@@ -121,6 +121,8 @@ export class EnvironmentRegistry extends Context.Service<
         readonly refuseNewRoute?: boolean;
       },
     ) => Effect.Effect<boolean, ConnectionBlockedError | Persistence.ConnectionPersistenceError>;
+    /** The host owns platform-managed entries, so `register` leaves them untouched. */
+    readonly isPlatformEnvironment: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -1158,6 +1160,11 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    isPlatformEnvironment: Effect.fn("EnvironmentRegistry.isPlatformEnvironment")(function* (
+      environmentId: EnvironmentId,
+    ) {
+      return (yield* Ref.get(platformEnvironmentIds)).has(environmentId);
+    }),
     registerPlatform,
     reconcilePlatform,
     remove,

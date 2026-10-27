@@ -113,17 +113,17 @@ export const preparePairingRegistration = Effect.fn(
   ) {
     return yield* differentMachineError(descriptor.label);
   }
-  if (input.expectedEnvironmentId === undefined) {
-    const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
-    const saved = Option.isSome(registry)
-      ? (yield* SubscriptionRef.get(registry.value.entries)).get(descriptor.environmentId)
-      : undefined;
+  const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
+  if (
+    input.expectedEnvironmentId === undefined &&
+    Option.isSome(registry) &&
+    !(yield* registry.value.isPlatformEnvironment(descriptor.environmentId))
+  ) {
     // Mirrors the guard in `register`, which stays authoritative; platform entries ignore pairing.
-    if (
-      saved !== undefined &&
-      saved.target._tag !== "PrimaryConnectionTarget" &&
-      !hasRouteToHttpBaseUrl(saved, target.httpBaseUrl)
-    ) {
+    const saved = (yield* SubscriptionRef.get(registry.value.entries)).get(
+      descriptor.environmentId,
+    );
+    if (saved !== undefined && !hasRouteToHttpBaseUrl(saved, target.httpBaseUrl)) {
       return yield* EnvironmentRegistry.savedEnvironmentAddressError(saved.target.label);
     }
   }
