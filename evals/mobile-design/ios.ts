@@ -148,7 +148,7 @@ export class Simulator {
 
   /**
    * Loads the JS straight from Metro. The dev menu's preferences hide its tools button and
-   * launch sheet; a dev-launcher link would set them too, but iOS asks before opening it.
+   * launch sheet; the same flags on --initialUrl do not reach them.
    */
   async launch(metroUrl: string) {
     for (const [key, value] of [
@@ -158,24 +158,26 @@ export class Simulator {
     ] as const) {
       await simctl("spawn", this.udid, "defaults", "write", BUNDLE_ID, key, "-bool", value);
     }
-    // Attaches the agent-device session, which every later command needs.
-    await this.agent(["open", BUNDLE_ID], 600_000);
     const loaded = /^(Chats|Add environment|New chat|Search threads)$/;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Launch arguments only reach a fresh process, so start it before agent-device attaches.
       await simctl(
         "launch",
-        "--terminate-running-process",
+        ...(attempt > 0 ? ["--terminate-running-process"] : []),
         this.udid,
         BUNDLE_ID,
         "--initialUrl",
         metroUrl,
       );
+      // The first snapshot attaches the agent-device session, which can take minutes.
+      await this.agent(["open", BUNDLE_ID], 600_000);
       const snapshot = await this.waitFor(
         new RegExp(`${loaded.source}|^Reload$`),
         "the app to load",
         180_000,
       ).catch(() => null);
       if (snapshot && this.find(snapshot, loaded)) return;
+      if (snapshot) await this.tap(/^Reload$/).catch(() => undefined);
     }
     throw new Error("The app did not load from Metro.");
   }
@@ -183,17 +185,18 @@ export class Simulator {
   async pair(pairingUrls: ReadonlyArray<string>, firstThreadTitle: RegExp) {
     for (const pairingUrl of pairingUrls) {
       const query = new URLSearchParams({ pairingUrl, autoConnect: "1" });
-      await this.openUrl(`t3code://connections/new?${query}`);
+      // Pairing runs once per device, so it can wait out a slow host.
+      await this.openUrl(`t3code://connections/new?${query}`, 180_000);
       await delay(4_000);
     }
-    await this.waitFor(firstThreadTitle, "the paired thread list", 90_000);
+    await this.waitFor(firstThreadTitle, "the paired thread list", 180_000);
   }
 
   /** iOS asks before a link opens the app; accept the prompt once it shows. */
-  async openUrl(url: string) {
+  async openUrl(url: string, timeoutMs = 60_000) {
     await simctl("openurl", this.udid, url);
     // A busy host can take seconds per XCTest call, and the prompt itself can be late.
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const accepted = await this.agent(["alert", "accept"]).then(
         () => true,
@@ -340,12 +343,19 @@ export class Simulator {
 
   /** agent-device names rotations from the natural orientation, so try each until the shape fits. */
   private async orient(shape: "portrait" | "landscape") {
-    for (const name of ["portrait", "landscape-left", "landscape-right"]) {
+    const fits = async () => {
       const { width, height } = (await this.snapshot()).viewport;
-      if (width > height === (shape === "landscape")) return;
+      return width > height === (shape === "landscape");
+    };
+    if (await fits()) return;
+    for (const name of shape === "landscape"
+      ? ["landscape-left", "landscape-right"]
+      : ["portrait"]) {
       await this.agent(["orientation", name]);
       await delay(2_000);
+      if (await fits()) return;
     }
+    throw new Error(`could not rotate to ${shape}`);
   }
 
   async screenshot(destination: string, pose: Pose) {

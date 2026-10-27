@@ -23,10 +23,10 @@ import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
 } from "../../scripts/mobile-showcase-environment.ts";
-import { FLOWS, SCENES, type DeviceClassId, type Flow, type Pose, type SceneId } from "./cases.ts";
+import { FLOWS, SCENES, type Flow, type Pose, type SceneId } from "./cases.ts";
 import { delay, linkTargets, type LinkTargets, run, Simulator } from "./ios.ts";
 
-/** One screenshot of the run, as `captures/mobile.json` records it. */
+/** One screenshot of the run, as `captures/captures.json` records it. */
 export interface MobileShot {
   readonly pose: string;
   readonly scene: SceneId;
@@ -227,7 +227,11 @@ export async function captureMobile(input: {
       .url;
     await run("curl", ["-sf", "-o", "/dev/null", bundleUrl], { timeoutMs: 900_000 });
 
-    const devices = [...new Set(input.poses.map((pose) => pose.device))] as DeviceClassId[];
+    // The flows answer the question and stop background work on the shared servers, so the
+    // iPhone, which runs them, goes last.
+    const devices = [...new Set(input.poses.map((pose) => pose.device))].toSorted(
+      (a, b) => Number(a === "iphone") - Number(b === "iphone"),
+    );
     for (const device of devices) {
       input.log(`${device}: creating the simulator`);
       const simulator = await Simulator.create(device, runId);

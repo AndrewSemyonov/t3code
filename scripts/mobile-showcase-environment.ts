@@ -577,7 +577,6 @@ export async function writeShowcaseProviderSettings(baseDir: string): Promise<vo
     `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(providerScript)} "$@"\n`,
     { mode: 0o755 },
   );
-  const disabled = ["claudeAgent", "cursor", "grok", "opencode", "antigravity", "pi"];
   await NodeFSP.mkdir(NodePath.join(baseDir, "userdata"), { recursive: true });
   await NodeFSP.writeFile(
     NodePath.join(baseDir, "userdata", "settings.json"),
@@ -585,9 +584,8 @@ export async function writeShowcaseProviderSettings(baseDir: string): Promise<vo
       {
         providerInstances: {
           codex: { driver: "codex", enabled: true, config: { binaryPath: codexPath } },
-          ...Object.fromEntries(
-            disabled.map((instanceId) => [instanceId, { driver: instanceId, enabled: false }]),
-          ),
+          // The only other provider on by default.
+          claudeAgent: { driver: "claudeAgent", enabled: false },
         },
       },
       null,

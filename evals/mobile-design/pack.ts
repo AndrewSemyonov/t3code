@@ -100,7 +100,8 @@ export async function buildPack(input: {
   const entries: PackEntry[] = [];
 
   for (const scene of SCENES) {
-    const shots = input.shots.filter((shot) => shot.scene === scene.id);
+    // A capture that missed its ready state shows the harness, not the design; run.ts lists it.
+    const shots = input.shots.filter((shot) => shot.scene === scene.id && !shot.problem);
     const groups = new Map<string, Tile[]>();
     for (const shot of shots) {
       const pose = POSES.find((candidate) => candidate.id === shot.pose);
@@ -189,7 +190,6 @@ export async function buildPack(input: {
 
   const template = await NodeFSP.readFile(NodePath.join(import.meta.dirname, "brief.md"), "utf8");
   const brief = template
-    .replaceAll("{{PACK}}", pack)
     .replace(
       "{{SCREENS}}",
       entries
@@ -211,7 +211,10 @@ export async function buildPack(input: {
         ? referenceImages.map((name) => `- \`references/${name}\``).join("\n")
         : "No reference screenshots of the Codex or Claude iOS apps are in this pack. Judge that axis from what you know of those apps, and say so.",
     )
-    .replace("{{AXES}}", AXES.map((axis) => `- \`${axis.id}\`: ${axis.label}`).join("\n"))
+    .replace(
+      "{{AXES}}",
+      AXES.map((axis) => `- \`${axis.id}\`: **${axis.label}**: ${axis.description}.`).join("\n"),
+    )
     .replace(
       "{{DEVICES}}",
       DEVICE_CLASSES.map((device) => `- \`${device.id}\`: ${device.label}`).join("\n"),

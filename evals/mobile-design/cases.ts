@@ -5,12 +5,37 @@
  */
 
 export const AXES = [
-  { id: "visual", label: "Visual design" },
-  { id: "layout", label: "Layout quality" },
-  { id: "flow", label: "Flow clarity" },
-  { id: "polish", label: "Polish" },
-  { id: "desktop", label: "Conformance with desktop" },
-  { id: "competitors", label: "Quality versus Codex and Claude" },
+  {
+    id: "visual",
+    label: "Visual design",
+    description: "type, color, icons, spacing and hierarchy",
+  },
+  {
+    id: "layout",
+    label: "Layout quality",
+    description: "use of the screen, safe areas, the keyboard, folds and rotation, large text",
+  },
+  {
+    id: "flow",
+    label: "Flow clarity",
+    description: "how obvious each task is, from the flows and from what each screen offers next",
+  },
+  {
+    id: "polish",
+    label: "Polish",
+    description:
+      "alignment, truncation, clipped or overlapping content, empty space, state indicators",
+  },
+  {
+    id: "desktop",
+    label: "Conformance with desktop",
+    description: "whether this reads as the same product as the desktop app",
+  },
+  {
+    id: "competitors",
+    label: "Quality versus Codex and Claude",
+    description: "how this compares with the Codex and Claude iOS apps",
+  },
 ] as const;
 export type AxisId = (typeof AXES)[number]["id"];
 
@@ -115,7 +140,6 @@ export const SCENES = [
     title: "Composer with a long prompt",
     source: REQUEST,
     steps: [thread("pocket-command-center")],
-    desktop: { path: "/{thread:pocket-command-center}" },
   },
   {
     id: "composer-attachments",
@@ -204,37 +228,9 @@ export const SCENES = [
 ] as const satisfies ReadonlyArray<Scene>;
 export type SceneId = (typeof SCENES)[number]["id"];
 
-/** Scenes where width and folding change the layout most. */
-const LAYOUT_SCENES: ReadonlyArray<SceneId> = [
-  "threads",
-  "thread-tool-calls",
-  "thread-streaming",
-  "composer-model-picker",
-  "new-thread",
-  "question",
-  "approval",
-  "background",
-  "terminal",
-  "review",
-  "settings",
-];
-const LIGHT_SCENES: ReadonlyArray<SceneId> = [
-  "threads",
-  "thread-tool-calls",
-  "question",
-  "review",
-  "settings",
-];
-
 export const POSES = [
   { id: "iphone-dark", device: "iphone", label: "iPhone, dark", appearance: "dark" },
-  {
-    id: "iphone-light",
-    device: "iphone",
-    label: "iPhone, light",
-    appearance: "light",
-    scenes: LIGHT_SCENES,
-  },
+  { id: "iphone-light", device: "iphone", label: "iPhone, light", appearance: "light" },
   {
     id: "iphone-large-text",
     device: "iphone",
@@ -260,7 +256,6 @@ export const POSES = [
       label: `iPhone Duo ${fold}, ${appearance}`,
       appearance,
       fold,
-      scenes: appearance === "dark" ? LAYOUT_SCENES : LIGHT_SCENES,
     })),
   ),
   ...(["landscape", "portrait"] as const).flatMap((orientation) =>
@@ -270,7 +265,6 @@ export const POSES = [
       label: `iPad ${orientation}, ${appearance}`,
       appearance,
       orientation,
-      scenes: appearance === "dark" ? [...LAYOUT_SCENES, "environments"] : LIGHT_SCENES,
     })),
   ),
 ] as const satisfies ReadonlyArray<Pose>;
@@ -279,7 +273,7 @@ export interface Flow {
   readonly id: string;
   readonly title: string;
   readonly source: string;
-  /** Each step is one screenshot; taps are counted from `tap` steps. */
+  /** Each step is one screenshot; `tap` and `focus` steps count as taps. */
   readonly steps: ReadonlyArray<StepAction>;
 }
 
@@ -294,7 +288,8 @@ export const FLOWS = [
       { tap: "^T3 Code$" },
       { tap: "^React$" },
       { tap: "^Choose environment" },
-      { tap: "^Suspense Station" },
+      // Pick whichever machine the picker offers; when it is not the project's, the frames show it.
+      { tap: "^(Suspense Station|Moonbase Terminal|Kernel Cabin)" },
       { focus: "composer" },
       { type: "Add a loading skeleton to the profile page" },
       { tap: "^Send$" },

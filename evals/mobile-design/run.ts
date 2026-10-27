@@ -9,7 +9,7 @@ import { captureDesktop, findShot, type DesktopShot } from "./capture-desktop.ts
 import { captureMobile, type FlowResult, type MobileShot } from "./capture-mobile.ts";
 import { DEFAULT_PANEL, PANEL, POSES, SCENES, type PanelMember, type SceneId } from "./cases.ts";
 import { buildPack } from "./pack.ts";
-import { parseReviewerReply, renderSummary, summarizeRound, type Medians } from "./scores.ts";
+import { parseReviewerReply, renderSummary, summarizeRound, type RoundSummary } from "./scores.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -59,7 +59,7 @@ async function readCaptures(): Promise<Captures> {
   return text ? (JSON.parse(text) as Captures) : { shots: [], flows: [], desktop: [] };
 }
 
-/** Merges new captures over earlier ones, so mobile and desktop can run on different hosts. */
+/** Merges new captures over earlier ones, so one run can add desktop pairs or redo a pose. */
 async function saveCaptures(update: Partial<Captures>) {
   const current = await readCaptures();
   const replaced = <T extends { readonly file: string }>(
@@ -124,15 +124,13 @@ async function summarize() {
       }),
     ),
   );
-  const baseline = values.baseline
-    ? (
-        JSON.parse(
-          await NodeFSP.readFile(
-            NodePath.join(NodePath.resolve(values.baseline), "summary.json"),
-            "utf8",
-          ),
-        ) as { medians: Medians }
-      ).medians
+  const baseline: RoundSummary | null = values.baseline
+    ? JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(NodePath.resolve(values.baseline), "summary.json"),
+          "utf8",
+        ),
+      )
     : null;
   const round = summarizeRound(reviewers);
   await NodeFSP.writeFile(

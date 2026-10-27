@@ -50,10 +50,13 @@ const threadCwds = new Map<string, string>();
 const backgroundCommands = new Map<string, { threadId: string; turnId: string; item: Frame }>();
 const interruptedTurns = new Set<string>();
 
-function serverRequest(method: string, params: Frame): Promise<Frame> {
+/** Sends a request to the server and resolves with its id and the server's answer. */
+function serverRequest(method: string, params: Frame): Promise<{ id: number; result: Frame }> {
   const id = nextServerRequestId++;
   write({ method, id, params });
-  return new Promise((resolve) => pendingServerRequests.set(id, resolve));
+  return new Promise((resolve) =>
+    pendingServerRequests.set(id, (result) => resolve({ id, result })),
+  );
 }
 
 function threadPayload(threadId: string, cwd: string, model: string): Frame {
@@ -247,20 +250,22 @@ async function playStep(
         background: false,
       });
       notify("item/started", { ...turn, item, startedAtMs: Date.now() });
-      const requestId = nextServerRequestId;
-      const result = await serverRequest("item/commandExecution/requestApproval", {
-        kind: "command",
-        ...turn,
-        itemId: item.id,
-        startedAtMs: Date.now(),
-        environmentId: "local",
-        reason: step.reason,
-        command: item.command,
-        cwd,
-        commandActions: item.commandActions,
-        proposedExecpolicyAmendment: null,
-        availableDecisions: ["accept", "acceptForSession", "decline"],
-      });
+      const { id: requestId, result } = await serverRequest(
+        "item/commandExecution/requestApproval",
+        {
+          kind: "command",
+          ...turn,
+          itemId: item.id,
+          startedAtMs: Date.now(),
+          environmentId: "local",
+          reason: step.reason,
+          command: item.command,
+          cwd,
+          commandActions: item.commandActions,
+          proposedExecpolicyAmendment: null,
+          availableDecisions: ["accept", "acceptForSession", "decline"],
+        },
+      );
       notify("serverRequest/resolved", { threadId: turn.threadId, requestId });
       const accepted = result.decision === "accept" || result.decision === "acceptForSession";
       notify("item/completed", {
@@ -279,8 +284,7 @@ async function playStep(
       return;
     }
     case "question": {
-      const requestId = nextServerRequestId;
-      await serverRequest("item/tool/requestUserInput", {
+      const { id: requestId } = await serverRequest("item/tool/requestUserInput", {
         ...turn,
         itemId: newId("call"),
         questions: step.questions.map((question) => ({
@@ -415,7 +419,8 @@ function main() {
     process.stdout.write(`codex-cli ${VERSION}\n`);
     return;
   }
-  if (args[0] !== "app-server") process.exit(1);
+  if (args[0] !== "app-server" || args.includes("--help"))
+    process.exit(args.includes("--help") ? 0 : 1);
   const lines = NodeReadline.createInterface({ input: process.stdin });
   lines.on("line", (line) => {
     if (!line.trim()) return;

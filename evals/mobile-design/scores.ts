@@ -64,8 +64,14 @@ const formatDelta = (value: number) =>
   Number.isNaN(value) ? "–" : value === 0 ? "0.0" : `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
 
 /** The summary table: one row per device and axis, with deltas when a baseline is given. */
-export function renderSummary(round: RoundSummary, baseline: Medians | null): string {
+export function renderSummary(round: RoundSummary, baseline: RoundSummary | null): string {
   const names = Object.keys(round.reviewers);
+  const baselineNames = baseline ? Object.keys(baseline.reviewers) : names;
+  // A different panel moves the median by itself, so say so next to the deltas.
+  const panelNote =
+    baselineNames.toSorted().join() === names.toSorted().join()
+      ? ""
+      : `\nThe baseline panel was ${baselineNames.join(", ")}; this round's is ${names.join(", ")}. Read the deltas with that in mind.\n`;
   const header = ["Device", "Axis", "Median", ...names, ...(baseline ? ["Δ baseline"] : [])];
   const rows = DEVICE_CLASSES.flatMap((device) =>
     AXES.map((axis) => {
@@ -75,7 +81,7 @@ export function renderSummary(round: RoundSummary, baseline: Medians | null): st
         axis.label,
         formatScore(value),
         ...names.map((name) => formatScore(round.reviewers[name]!.scores[device.id][axis.id])),
-        ...(baseline ? [formatDelta(value - baseline[device.id][axis.id])] : []),
+        ...(baseline ? [formatDelta(value - baseline.medians[device.id][axis.id])] : []),
       ];
     }),
   );
@@ -88,5 +94,5 @@ export function renderSummary(round: RoundSummary, baseline: Medians | null): st
         `### ${name}\n\n${round.reviewers[name]!.fixes.map((fix, index) => `${index + 1}. ${fix}`).join("\n")}`,
     )
     .join("\n\n");
-  return `# Mobile design scores\n\n${table}\n\n## Top fixes\n\n${fixes}\n`;
+  return `# Mobile design scores\n${panelNote}\n${table}\n\n## Top fixes\n\n${fixes}\n`;
 }

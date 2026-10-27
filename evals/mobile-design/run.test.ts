@@ -41,11 +41,21 @@ describe("summarizeRound", () => {
   });
 
   it("shows deltas against the baseline medians", () => {
-    const baseline = summarizeRound({ opus: parseReviewerReply(reply(6)) }).medians;
+    const baseline = summarizeRound({ opus: parseReviewerReply(reply(6)) });
     const markdown = renderSummary(
       summarizeRound({ opus: parseReviewerReply(reply(8)) }),
       baseline,
     );
     expect(markdown).toContain("| iPhone 17 Pro | Visual design | 8.0 | 8.0 | +2.0 |");
+    expect(markdown).not.toContain("baseline panel");
+  });
+
+  it("flags a baseline scored by a different panel", () => {
+    const baseline = summarizeRound({ opus: parseReviewerReply(reply(6)) });
+    const round = summarizeRound({
+      opus: parseReviewerReply(reply(8)),
+      muse: parseReviewerReply(reply(8)),
+    });
+    expect(renderSummary(round, baseline)).toContain("The baseline panel was opus");
   });
 });
