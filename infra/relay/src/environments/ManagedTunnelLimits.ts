@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { T3CHAT_PREMIER_TUNNEL_LIMIT } from "@t3tools/contracts/relay";
 
 import * as RelayDb from "../db.ts";
 import {
@@ -10,6 +11,7 @@ import {
   relayManagedEndpointAllocations,
   relayManagedTunnelLimits,
 } from "../persistence/schema.ts";
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 
 const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 
@@ -52,6 +54,18 @@ export class ManagedTunnelLimits extends Context.Service<
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+
+  // Asked only at the cap, so most links never call T3 Chat. Any failure keeps the lower cap.
+  const hasT3ChatPremier = (userId: string) =>
+    t3Chat.getLink({ userId }).pipe(
+      Effect.map((link) => link?.plan === "premier"),
+      Effect.catch((error) =>
+        Effect.logWarning("T3 Chat plan check failed", { userId, error: error.message }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
 
   return ManagedTunnelLimits.of({
     ensureCapacity: Effect.fn("relay.managed_tunnel_limits.ensure_capacity")(function* (input) {
@@ -70,7 +84,7 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      const maxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
+      const baseMaxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
       // Exclude this environment so relinking remains idempotent at the account limit.
       const counted = yield* db
@@ -102,7 +116,14 @@ const make = Effect.gen(function* () {
           ),
         );
       const activeTunnels = counted[0]?.activeTunnels ?? 0;
+      if (activeTunnels < baseMaxTunnels) return;
 
+      const maxTunnels =
+        t3Chat.available &&
+        baseMaxTunnels < T3CHAT_PREMIER_TUNNEL_LIMIT &&
+        (yield* hasT3ChatPremier(input.userId))
+          ? T3CHAT_PREMIER_TUNNEL_LIMIT
+          : baseMaxTunnels;
       if (activeTunnels >= maxTunnels) {
         return yield* new ManagedTunnelLimitExceeded({
           userId: input.userId,
