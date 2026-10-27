@@ -95,6 +95,10 @@ async function seedComposerDrafts(simulator: Simulator, targets: LinkTargets) {
   );
 }
 
+/** Keeps every cause when a capture fails for more than one reason. */
+const joinProblems = (earlier: string | undefined, next: string) =>
+  earlier ? `${earlier}; ${next}` : next;
+
 async function captureScene(
   simulator: Simulator,
   pose: Pose,
@@ -111,12 +115,15 @@ async function captureScene(
     for (const step of scene.steps) await simulator.perform(step, targets);
     if ("ready" in scene) await simulator.waitFor(new RegExp(scene.ready), scene.title);
   } catch (error) {
-    problem ??= error instanceof Error ? error.message : String(error);
+    problem = joinProblems(problem, error instanceof Error ? error.message : String(error));
   }
   // Screenshot a failed scene too: where it stopped is the diagnosis.
   await delay(1_500);
   await simulator.screenshot(NodePath.join(outDirectory, file), pose).catch((error: unknown) => {
-    problem ??= `screenshot failed: ${error instanceof Error ? error.message : String(error)}`;
+    problem = joinProblems(
+      problem,
+      `screenshot failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   });
   if ("reset" in scene) {
     for (const step of scene.reset) await simulator.perform(step, targets).catch(() => undefined);
@@ -180,7 +187,7 @@ async function captureFlow(
       await frame(action);
     }
   } catch (error) {
-    problem ??= error instanceof Error ? error.message : String(error);
+    problem = joinProblems(problem, error instanceof Error ? error.message : String(error));
   }
   return {
     flow: flow.id,
