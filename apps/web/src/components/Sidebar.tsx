@@ -1776,6 +1776,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
     });
   };
+  const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -1785,13 +1786,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return { kind: "thread", key, section };
       });
+    // Boring mode keeps empty project folders, so each can start a thread.
     if (
+      !hasProjectFolders &&
       pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
         snoozedThreads.length +
         settledCount ===
-      0
+        0
     ) {
       return [];
     }
@@ -3333,6 +3336,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             </TooltipProvider>
           ) : null}
           {!isSearchingThreads &&
+          !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +
