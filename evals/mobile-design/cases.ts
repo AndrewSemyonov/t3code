@@ -171,7 +171,8 @@ export const SCENES = [
     title: "New thread, project chosen",
     source: REQUEST,
     steps: [{ link: "new" }, { tap: "^T3 Code$" }],
-    desktop: { path: "/new" },
+    // The web app has no new-thread route; its home page is the new-thread screen.
+    desktop: { path: "/" },
   },
   {
     id: "question",
