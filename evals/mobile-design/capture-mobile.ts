@@ -22,6 +22,7 @@ import {
 import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
+  SHOWCASE_THREADS,
 } from "../../scripts/mobile-showcase-environment.ts";
 import { FLOWS, SCENES, type Flow, type Pose, type SceneId } from "./cases.ts";
 import { delay, linkTargets, type LinkTargets, run, Simulator } from "./ios.ts";
@@ -255,14 +256,23 @@ export async function captureMobile(input: {
         input.log(`${device}: launching`);
         await simulator.launch(`http://127.0.0.1:${metroPort}`);
         const pairings = await Promise.all(
-          environments.map(async (environment) => ({
-            url: buildShowcasePairingUrl(
-              "127.0.0.1",
-              environment.port,
-              await issuePairingCredential(environment.baseDir),
-            ),
-            label: environment.label,
-          })),
+          environments.map(async (environment, index) => {
+            const projectIds: ReadonlyArray<string> = SHOWCASE_ENVIRONMENTS[index]!.projectIds;
+            return {
+              url: buildShowcasePairingUrl(
+                "127.0.0.1",
+                environment.port,
+                await issuePairingCredential(environment.baseDir),
+              ),
+              // Rows name their machine only once two are paired, so its threads count too.
+              labels: [
+                environment.label,
+                ...SHOWCASE_THREADS.filter((thread) => projectIds.includes(thread.projectId)).map(
+                  (thread) => thread.title,
+                ),
+              ],
+            };
+          }),
         );
         await simulator.pair(pairings);
         for (const pose of input.poses.filter((candidate) => candidate.device === device)) {

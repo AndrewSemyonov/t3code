@@ -188,15 +188,17 @@ export class Simulator {
     throw new Error("The app did not load from Metro.");
   }
 
-  /** Pairs each environment, waiting until its threads list it before the next, so links never overlap. */
-  async pair(pairings: ReadonlyArray<{ readonly url: string; readonly label: string }>) {
+  /** Pairs each environment, waiting until the list shows it before the next, so links never overlap. */
+  async pair(
+    pairings: ReadonlyArray<{ readonly url: string; readonly labels: ReadonlyArray<string> }>,
+  ) {
     for (const pairing of pairings) {
       const query = new URLSearchParams({ pairingUrl: pairing.url, autoConnect: "1" });
       // Pairing runs once per device, so it can wait out a slow host.
       await this.openUrl(`t3code://connections/new?${query}`, 180_000);
       await this.waitFor(
-        new RegExp(`^${RegExp.escape(pairing.label)}$`),
-        `${pairing.label} after pairing`,
+        new RegExp(`^(${pairing.labels.map((label) => RegExp.escape(label)).join("|")})`),
+        `${pairing.labels[0]} after pairing`,
         { timeoutMs: 180_000, offScreen: true },
       );
     }
