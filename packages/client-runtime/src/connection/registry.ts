@@ -106,7 +106,14 @@ export class EnvironmentRegistry extends Context.Service<
      */
     readonly register: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
+      options?: {
+        /**
+         * Refuse to add a new address to an environment that is already saved. Pairing sets this
+         * unless the user targeted that environment, because the environment id is self-reported.
+         */
+        readonly refuseNewRoute?: boolean;
+      },
+    ) => Effect.Effect<boolean, ConnectionBlockedError | Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -536,6 +543,7 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
+    options?: { readonly refuseNewRoute?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
@@ -551,6 +559,12 @@ export const make = Effect.gen(function* () {
           const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
+          if (options?.refuseNewRoute === true && sameAddress === undefined) {
+            return yield* new ConnectionBlockedError({
+              reason: "configuration",
+              detail: `That address claims to be ${previous.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+            });
+          }
           const routes = existing.filter(
             (existing) =>
               existing !== sameAddress ||

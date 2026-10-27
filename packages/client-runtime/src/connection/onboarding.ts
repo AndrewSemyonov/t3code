@@ -149,7 +149,10 @@ const registerPairingConnection = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  if (!(yield* registry.register(registration))) return registration.target.environmentId;
+  const registered = yield* registry.register(registration, {
+    refuseNewRoute: input.expectedEnvironmentId === undefined,
+  });
+  if (!registered) return registration.target.environmentId;
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)

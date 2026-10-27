@@ -37,6 +37,7 @@ import {
 } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const layerClientPresentation = Layer.succeed(
@@ -290,6 +291,40 @@ describe("connection onboarding", () => {
           connectionId: PAIRED_PROFILE.connectionId,
           label: PAIRED_PROFILE.label,
         }),
+      );
+    }).pipe(Effect.provide(layerPairingOnboarding())),
+  );
+
+  it.effect("refuses a pairing link that claims a saved environment from a new address", () =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const before = yield* registerSwitchedOffEnvironment;
+
+      const error = yield* onboarding
+        .registerPairing({ host: "attacker.example.test", pairingCode: "pairing-token" })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+      expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
+    }).pipe(Effect.provide(layerPairingOnboarding())),
+  );
+
+  it.effect("adds a new address as a route when pairing targets that environment", () =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      yield* registerSwitchedOffEnvironment;
+
+      yield* onboarding.registerPairing({
+        host: "lan.example.test",
+        pairingCode: "pairing-token",
+        expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+      });
+
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      expect(entry === undefined ? [] : connectionRoutes(entry).map(routeHttpBaseUrl)).toEqual(
+        expect.arrayContaining(["https://remote.example.test/", "https://lan.example.test/"]),
       );
     }).pipe(Effect.provide(layerPairingOnboarding())),
   );
