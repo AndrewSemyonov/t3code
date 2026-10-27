@@ -70,12 +70,18 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironments: (() => ({ environments })) as never,
+  readEnvironment: ((id: EnvironmentId) =>
+    environments.find((environment) => environment.environmentId === id) ?? null) as never,
   usePrimaryEnvironmentId: () => primaryId,
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => state.projects) as never,
   useThreadShells: () => [],
+  useServerConfigs: (() =>
+    new Map(
+      environments.map((environment) => [environment.environmentId, environment.serverConfig]),
+    )) as never,
   waitForProjectRemoval: async () => true,
 }));
 vi.mock(import("~/state/projects"), async (original) => {

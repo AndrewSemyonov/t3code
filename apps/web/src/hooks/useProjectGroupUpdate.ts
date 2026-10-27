@@ -10,7 +10,8 @@ import * as Cause from "effect/Cause";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type { SidebarProjectGroupMember } from "../sidebarProjectGrouping";
-import { useEnvironments } from "../state/environments";
+import { useServerConfigs } from "../state/entities";
+import { readEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { readEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -33,50 +34,32 @@ type ProjectGroupMember = Pick<
  * reports the first failure as a toast. Every machine must be connected first.
  */
 export function useProjectGroupUpdate() {
-  const { environments } = useEnvironments();
-  const environmentById = new Map(
-    environments.map((environment) => [environment.environmentId, environment]),
-  );
+  const serverConfigs = useServerConfigs();
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
-
-  const fail = (title: string, error: Error): AtomCommandResult<void, unknown> => {
-    const result = AsyncResult.failure<void, Error>(Cause.fail(error));
-    reportFailure(title, result);
-    return result;
-  };
-
-  const accessError = (member: ProjectGroupMember) =>
-    readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope)
-      ? null
-      : new Error(
-          `This connection cannot change projects in ${member.environmentLabel ?? "this environment"}.`,
-        );
 
   const updateProjectGroup = async (
     members: ReadonlyArray<ProjectGroupMember>,
     input: ProjectGroupUpdate,
     failureTitle: string,
   ): Promise<AtomCommandResult<void, unknown>> => {
-    const denied = members.map(accessError).find((error) => error !== null);
-    if (denied) return fail(failureTitle, denied);
+    const denied = checkProjectAccess(members, failureTitle);
+    if (denied) return denied;
     const unavailable = members.find((member) => {
-      const environment = environmentById.get(member.environmentId);
+      const environment = readEnvironment(member.environmentId);
       return environment?.connection.phase !== "connected" || !environment.serverConfig;
     });
     if (unavailable) {
-      return fail(
+      return failWith(
         failureTitle,
-        new Error(
-          `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
-        ),
+        `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
       );
     }
     for (const member of members) {
       // Access can be revoked between writes.
-      const revoked = accessError(member);
-      if (revoked) return fail(failureTitle, revoked);
+      const revoked = checkProjectAccess([member], failureTitle);
+      if (revoked) return revoked;
       const result = mapAtomCommandResult(
         await updateProject({
           environmentId: member.environmentId,
@@ -85,7 +68,7 @@ export function useProjectGroupUpdate() {
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportFailure(
+        reportProjectFailure(
           members.length > 1
             ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
             : failureTitle,
@@ -101,14 +84,30 @@ export function useProjectGroupUpdate() {
   const canOrganizeProjectGroup = (members: ReadonlyArray<ProjectGroupMember>) =>
     members.every(
       (member) =>
-        environmentById.get(member.environmentId)?.serverConfig?.environment.capabilities
-          .projectOrganization === true,
+        serverConfigs.get(member.environmentId)?.environment.capabilities.projectOrganization ===
+        true,
     );
 
   return { updateProjectGroup, canOrganizeProjectGroup };
 }
 
-function reportFailure(title: string, result: AtomCommandResult<void, unknown>) {
+/** Reports the first member this connection cannot change, and returns that failure. */
+export function checkProjectAccess(
+  members: ReadonlyArray<ProjectGroupMember>,
+  failureTitle: string,
+): AtomCommandResult<void, unknown> | null {
+  const denied = members.find(
+    (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+  );
+  return denied
+    ? failWith(
+        failureTitle,
+        `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+      )
+    : null;
+}
+
+export function reportProjectFailure(title: string, result: AtomCommandResult<void, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
   const error = squashAtomCommandFailure(result);
   toastManager.add(
@@ -118,4 +117,10 @@ function reportFailure(title: string, result: AtomCommandResult<void, unknown>) 
       description: error instanceof Error ? error.message : "An error occurred.",
     }),
   );
+}
+
+function failWith(title: string, message: string): AtomCommandResult<void, unknown> {
+  const result = AsyncResult.failure<void, Error>(Cause.fail(new Error(message)));
+  reportProjectFailure(title, result);
+  return result;
 }

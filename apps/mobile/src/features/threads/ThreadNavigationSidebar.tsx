@@ -235,8 +235,9 @@ function ThreadNavigationSidebarPane(
       ),
     [projectScopes],
   );
+  // An archived project's filter reads as all projects, matching the filter menu.
   const selectedProjectScope =
-    projectScopes.find((scope) => scope.key === resolvedProjectKey) ?? null;
+    pickableProjectGroups(projectScopes).find((scope) => scope.key === resolvedProjectKey) ?? null;
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,

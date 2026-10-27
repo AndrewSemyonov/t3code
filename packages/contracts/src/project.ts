@@ -210,7 +210,7 @@ export const ProjectUpdatePayload = Schema.Struct({
   archived: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Archive (true) or unarchive (false). Archived projects leave project pickers. Threads and files are kept.",
+        "Archive (true) or unarchive (false) this environment's record. Threads and files are kept. A project on several machines leaves project pickers once every machine's record is archived.",
     }),
   ),
 });

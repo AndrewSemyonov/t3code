@@ -375,7 +375,11 @@ export function HomeScreen(props: HomeScreenProps) {
   })();
 
   const v2ProjectScopeKey = props.selectedProjectKey;
-  const v2ScopedProjectGroup = findHomeProjectScope(projectScopes, v2ProjectScopeKey);
+  // An archived project's filter reads as all projects, matching the filter menu.
+  const v2ScopedProjectGroup = findHomeProjectScope(
+    pickableProjectGroups(projectScopes),
+    v2ProjectScopeKey,
+  );
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,

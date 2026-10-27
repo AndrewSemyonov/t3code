@@ -148,7 +148,11 @@ import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -979,8 +983,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored key is left alone, so the scope returns with its project.
+  // An archived project's scope reads as all projects, matching the menu.
   const chosenProjectScopeKey = resolveSidebarProjectScopeKey({
-    groups: projectGroups,
+    groups: pickableProjectGroups(projectGroups),
     key: persistedProjectScopeKey,
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
@@ -1112,6 +1117,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
   const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
+  const operableEnvironmentIds = useEnvironmentsWithScope(projects, AuthOrchestrationOperateScope);
+  const canPinProject = (project: SidebarProjectSnapshot) =>
+    canOrganizeProjectGroup(project.memberProjects) &&
+    project.memberProjects.every((member) => operableEnvironmentIds.has(member.environmentId));
   const handleProjectSettings = useStableCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
@@ -2832,11 +2841,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
-                            {project && canOrganizeProjectGroup(project.memberProjects) ? (
-                              // Pinned rows always show their pin; others on hover.
+                            {project && canPinProject(project) ? (
                               <span
                                 className={cn(
-                                  "ml-auto flex",
+                                  "group/pin ml-auto flex",
                                   !project.pinned &&
                                     "opacity-0 in-data-highlighted:opacity-100 pointer-coarse:opacity-100",
                                 )}
@@ -2866,8 +2874,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 >
                                   {project.pinned ? (
                                     <>
-                                      <PinIcon className="size-3.5 in-data-highlighted:hidden" />
-                                      <PinOffIcon className="hidden size-3.5 in-data-highlighted:block" />
+                                      <PinIcon className="size-3.5 group-hover/pin:hidden" />
+                                      <PinOffIcon className="hidden size-3.5 group-hover/pin:block" />
                                     </>
                                   ) : (
                                     <PinIcon className="size-3.5" />
@@ -2882,11 +2890,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className={
-                                  canOrganizeProjectGroup(project.memberProjects)
-                                    ? undefined
-                                    : "ml-auto"
-                                }
+                                className={canPinProject(project) ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);

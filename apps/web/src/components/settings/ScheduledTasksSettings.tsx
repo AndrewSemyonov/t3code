@@ -1124,10 +1124,12 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
+  // An existing task keeps its project after that project is archived.
   const projects = allProjects.filter(
     (project) =>
       project.environmentId === environmentId &&
-      matchesScheduledTaskScope(scope, environmentId, project.id),
+      matchesScheduledTaskScope(scope, environmentId, project.id) &&
+      (project.archivedAt == null || project.id === task?.projectId),
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =

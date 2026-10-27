@@ -665,7 +665,12 @@ function TaskForm({
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  // The chosen project stays listed after it is archived.
+  const projects = useProjects().filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      (project.archivedAt == null || project.id === draft.projectId),
+  );
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   const canOperate = useAtomValue(

@@ -1,22 +1,19 @@
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
-import {
-  isAtomCommandInterrupted,
-  mapAtomCommandResult,
-  settlePromise,
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
+import { useEnvironmentsWithScope } from "../../state/session";
+import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
-import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
-import { useProjectGroupUpdate, type ProjectGroupUpdate } from "../../hooks/useProjectGroupUpdate";
+import {
+  checkProjectAccess,
+  reportProjectFailure,
+  useProjectGroupUpdate,
+  type ProjectGroupUpdate,
+} from "../../hooks/useProjectGroupUpdate";
 import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
-import * as Cause from "effect/Cause";
-import { ArchiveIcon, ArchiveRestoreIcon, InfoIcon, Trash2Icon } from "lucide-react";
+import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -34,7 +31,7 @@ import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { stackedThreadToast, toastManager } from "../ui/toast";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SettingResetButton,
@@ -188,7 +185,7 @@ function ProjectDetail({
   const environmentById = new Map(
     environments.map((environment) => [environment.environmentId, environment]),
   );
-  const editableIds = useEnvironmentsWithScope(group.memberProjects, AuthOrchestrationOperateScope);
+  const editableIds = useEnvironmentsWithScope(allMembers, AuthOrchestrationOperateScope);
   const canEditGroup = group.memberProjects.every((member) =>
     editableIds.has(member.environmentId),
   );
@@ -214,41 +211,12 @@ function ProjectDetail({
       ? window.desktopBridge?.pickProjectFavicon
       : undefined;
 
-  const reportFailure = (title: string, result: AtomCommandResult<void, unknown>) => {
-    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-    const error = squashAtomCommandFailure(result);
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : "An error occurred.",
-      }),
-    );
-  };
-
-  const checkProjectAccess = (
-    members: ReadonlyArray<SidebarProjectGroupMember>,
-    failureTitle: string,
-  ) => {
-    const denied = members.find(
-      (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
-    );
-    if (!denied) return null;
-    const result = AsyncResult.failure<void, Error>(
-      Cause.fail(
-        new Error(
-          `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
-        ),
-      ),
-    );
-    reportFailure(failureTitle, result);
-    return result;
-  };
-
   const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
   const updateAllMembers = (input: ProjectGroupUpdate, failureTitle: string) =>
     updateProjectGroup(group.memberProjects, input, failureTitle);
-  const canOrganize = canEditGroup && canOrganizeProjectGroup(allMembers);
+  const canOrganize =
+    allMembers.every((member) => editableIds.has(member.environmentId)) &&
+    canOrganizeProjectGroup(allMembers);
   const [isOrganizing, setIsOrganizing] = useState(false);
   const organize = async (input: ProjectGroupUpdate, failureTitle: string) => {
     setIsOrganizing(true);
@@ -328,7 +296,7 @@ function ProjectDetail({
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportFailure(`Failed to remove "${member.title}"`, result);
+        reportProjectFailure(`Failed to remove "${member.title}"`, result);
         return;
       }
       const projectRef = scopeProjectRef(member.environmentId, member.id);
@@ -548,7 +516,7 @@ function ProjectDetail({
                 }
               />
               <SettingsRow
-                title={group.archived ? "Archived" : "Archive"}
+                title="Archive"
                 description={
                   group.archived
                     ? "Hidden from project pickers. Threads and files are kept."
@@ -568,7 +536,6 @@ function ProjectDetail({
                       )
                     }
                   >
-                    {group.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
                     {group.archived ? "Unarchive" : "Archive"}
                   </Button>
                 }

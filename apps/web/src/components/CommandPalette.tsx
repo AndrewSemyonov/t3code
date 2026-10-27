@@ -394,6 +394,9 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    label: "project unarchive",
+  });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
@@ -1669,6 +1672,13 @@ function OpenCommandPaletteDialog(props: {
       cwd,
     );
     if (existing) {
+      // Adding an archived project's folder again brings the project back.
+      if (existing.archivedAt != null) {
+        void updateProject({
+          environmentId: existing.environmentId,
+          input: { projectId: existing.id, archived: false },
+        });
+      }
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === existing.environmentId),
         existing.id,

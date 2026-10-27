@@ -147,10 +147,8 @@ function ProjectOverviewContent(props: {
   const [draftName, setDraftName] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const threads = useThreadShells();
-  const removableEnvironments = useEnvironmentsWithScope(
-    props.members,
-    AuthOrchestrationOperateScope,
-  );
+  const allMembers = props.group.members.map((member) => member.project);
+  const removableEnvironments = useEnvironmentsWithScope(allMembers, AuthOrchestrationOperateScope);
   const canRemoveGroup = props.members.every((member) =>
     removableEnvironments.has(member.environmentId),
   );
@@ -164,25 +162,33 @@ function ProjectOverviewContent(props: {
     reportFailure: true,
   });
   const [isOrganizing, setIsOrganizing] = useState(false);
-  const allMembers = props.group.members.map((member) => member.project);
+  const memberTargets = allMembers.map((member) =>
+    props.connectedTargets.find((entry) => entry.environmentId === member.environmentId),
+  );
+  const offline = memberTargets.some((target) => target === undefined);
   // Older servers drop pin and archive, so their projects do not offer them.
   const canOrganize =
-    canRemoveGroup &&
-    allMembers.every(
-      (member) =>
-        props.connectedTargets.find((entry) => entry.environmentId === member.environmentId)
-          ?.serverConfig.environment.capabilities.projectOrganization === true,
+    allMembers.every((member) => removableEnvironments.has(member.environmentId)) &&
+    memberTargets.every(
+      (target) =>
+        target === undefined ||
+        target.serverConfig.environment.capabilities.projectOrganization === true,
     );
-  const organize = (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
+  // One machine at a time, stopping at the first failure, as web does.
+  const organize = async (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
     setIsOrganizing(true);
-    void Promise.all(
-      allMembers.map((member) =>
-        organizeProject({
-          environmentId: member.environmentId,
-          input: { projectId: member.id, ...input },
-        }),
-      ),
-    ).finally(() => setIsOrganizing(false));
+    for (const member of allMembers) {
+      if (!readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope)) {
+        Dialog.alert("Failed to update project", "This connection can no longer change it.");
+        break;
+      }
+      const result = await organizeProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, ...input },
+      });
+      if (result._tag === "Failure") break;
+    }
+    setIsOrganizing(false);
   };
   const nextName = (draftName ?? displayName).trim();
   const canSave = !isSaving && nextName.length > 0 && nextName !== displayName;
@@ -335,10 +341,14 @@ function ProjectOverviewContent(props: {
           <SettingsSwitchRow
             icon="pin"
             label="Pin"
-            subtitle="Pinned projects come first in project pickers."
+            subtitle={
+              offline
+                ? "Connect every machine with this project to change this."
+                : "Pinned projects come first in project pickers."
+            }
             value={props.group.pinned}
-            disabled={isOrganizing}
-            onValueChange={(pinned) => organize({ pinned })}
+            disabled={isOrganizing || offline}
+            onValueChange={(pinned) => void organize({ pinned })}
           />
           <SettingsActionRow
             icon="archivebox"
@@ -348,8 +358,8 @@ function ProjectOverviewContent(props: {
                 ? "Hidden from project pickers. Threads and files are kept."
                 : "Hides the project from project pickers. Threads and files are kept."
             }
-            disabled={isOrganizing}
-            onPress={() => organize({ archived: !props.group.archived })}
+            disabled={isOrganizing || offline}
+            onPress={() => void organize({ archived: !props.group.archived })}
           />
         </SettingsSection>
       ) : null}
