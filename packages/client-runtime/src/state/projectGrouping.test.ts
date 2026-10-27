@@ -7,6 +7,7 @@ import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
+  sortPickableProjectsByGroupOrder,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
@@ -402,6 +403,20 @@ describe("project pins and archives", () => {
       { key: "d", pinned: false, archived: true },
     ]);
     expect(pickable.map((entry) => entry.key)).toEqual(["c", "a"]);
+  });
+
+  it("orders project records the same way", () => {
+    const ref = (projectId: string) => ({ environmentId, projectId: ProjectId.make(projectId) });
+    const record = (id: string) => ({ id, environmentId });
+    const sorted = sortPickableProjectsByGroupOrder(
+      [record("a"), record("b"), record("c")],
+      [
+        { memberProjectRefs: [ref("a")], pinned: false, archived: false },
+        { memberProjectRefs: [ref("b")], pinned: true, archived: false },
+        { memberProjectRefs: [ref("c")], pinned: false, archived: true },
+      ],
+    );
+    expect(sorted.map((project) => project.id)).toEqual(["b", "a"]);
   });
 });
 

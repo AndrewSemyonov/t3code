@@ -397,3 +397,27 @@ export function sortProjectsByGroupOrder<
     rankByProject.get(`${project.environmentId}\0${project.id}`) ?? groups.length;
   return [...projects].sort((left, right) => rankOf(left) - rankOf(right));
 }
+
+/** Project records in picker order: archived groups' records left out, pinned groups first. */
+export function sortPickableProjectsByGroupOrder<
+  TProject extends { readonly id: string; readonly environmentId: string },
+>(
+  projects: ReadonlyArray<TProject>,
+  groups: ReadonlyArray<{
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  }>,
+): TProject[] {
+  const archived = new Set(
+    groups.flatMap((group) =>
+      group.archived
+        ? group.memberProjectRefs.map((ref) => `${ref.environmentId}\0${ref.projectId}`)
+        : [],
+    ),
+  );
+  return sortProjectsByGroupOrder(
+    projects.filter((project) => !archived.has(`${project.environmentId}\0${project.id}`)),
+    pickableProjectGroups(groups),
+  );
+}
