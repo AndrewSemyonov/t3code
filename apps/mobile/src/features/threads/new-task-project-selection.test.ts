@@ -51,6 +51,8 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
       environmentId: project.environmentId,
       projectId: project.id,
     })),
+    pinned: false,
+    archived: false,
   };
 }
 

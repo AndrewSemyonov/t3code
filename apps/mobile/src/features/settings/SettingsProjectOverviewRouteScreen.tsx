@@ -9,7 +9,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  deriveProjectGroupLabel,
+  type ProjectGroup,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
@@ -34,6 +37,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
@@ -59,6 +63,7 @@ export function SettingsProjectOverviewRouteScreen() {
   };
   const navigation = useNavigation();
   const {
+    availableTargets,
     selectedTargets,
     projectGroups,
     selectedProjectKey,
@@ -95,7 +100,7 @@ export function SettingsProjectOverviewRouteScreen() {
             <Text className="px-2 text-base text-foreground-muted">
               Choose a project with the filter above to manage its name, checkouts and removal.
             </Text>
-          ) : members.length === 0 ? (
+          ) : !group || members.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
               This project has no checkout on the selected connected environments. Change the filter
               above.
@@ -104,6 +109,8 @@ export function SettingsProjectOverviewRouteScreen() {
             <ProjectOverviewContent
               key={`${selectedProjectKey}:${members.map((member) => member.id).join(",")}`}
               members={members}
+              group={group}
+              connectedTargets={availableTargets}
               environments={selectedTargets}
               hasOtherMembers={members.length < (group?.members.length ?? 0)}
               isRemoving={isRemoving}
@@ -122,6 +129,9 @@ export function SettingsProjectOverviewRouteScreen() {
 
 function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
+  /** Pin and archive belong to the whole project, even when the filter picks one machine. */
+  readonly group: ProjectGroup;
+  readonly connectedTargets: readonly SettingsTarget[];
   readonly environments: readonly SettingsTarget[];
   readonly hasOtherMembers: boolean;
   readonly isRemoving: boolean;
@@ -149,6 +159,31 @@ function ProjectOverviewContent(props: {
     label: "project name update",
     reportFailure: true,
   });
+  const organizeProject = useAtomCommand(projectEnvironment.update, {
+    label: "project update",
+    reportFailure: true,
+  });
+  const [isOrganizing, setIsOrganizing] = useState(false);
+  const allMembers = props.group.members.map((member) => member.project);
+  // Older servers drop pin and archive, so their projects do not offer them.
+  const canOrganize =
+    canRemoveGroup &&
+    allMembers.every(
+      (member) =>
+        props.connectedTargets.find((entry) => entry.environmentId === member.environmentId)
+          ?.serverConfig.environment.capabilities.projectOrganization === true,
+    );
+  const organize = (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
+    setIsOrganizing(true);
+    void Promise.all(
+      allMembers.map((member) =>
+        organizeProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, ...input },
+        }),
+      ),
+    ).finally(() => setIsOrganizing(false));
+  };
   const nextName = (draftName ?? displayName).trim();
   const canSave = !isSaving && nextName.length > 0 && nextName !== displayName;
 
@@ -294,6 +329,30 @@ function ProjectOverviewContent(props: {
           </View>
         </View>
       </SettingsSection>
+
+      {canOrganize ? (
+        <SettingsSection title="Organize">
+          <SettingsSwitchRow
+            icon="pin"
+            label="Pin"
+            subtitle="Pinned projects come first in project pickers."
+            value={props.group.pinned}
+            disabled={isOrganizing}
+            onValueChange={(pinned) => organize({ pinned })}
+          />
+          <SettingsActionRow
+            icon="archivebox"
+            label={props.group.archived ? "Unarchive project" : "Archive project"}
+            description={
+              props.group.archived
+                ? "Hidden from project pickers. Threads and files are kept."
+                : "Hides the project from project pickers. Threads and files are kept."
+            }
+            disabled={isOrganizing}
+            onPress={() => organize({ archived: !props.group.archived })}
+          />
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection title="Checkouts">
         {props.members.map((member, index) => {

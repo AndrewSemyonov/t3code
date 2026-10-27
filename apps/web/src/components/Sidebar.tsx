@@ -59,7 +59,15 @@ import {
 } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
-import { ChevronDownIcon, FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderIcon,
+  ListFilterIcon,
+  PinIcon,
+  PinOffIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -95,7 +103,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { selectProjectGroupingSettings } from "../logicalProject";
+import { pickableProjectGroups, selectProjectGroupingSettings } from "../logicalProject";
 import {
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKey,
@@ -109,6 +117,7 @@ import {
 } from "../threadSelectionStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
@@ -740,7 +749,10 @@ function useSidebarLookups() {
   );
   const projectScopeItems = [
     { value: "all", label: "All projects" },
-    ...projectGroups.map((project) => ({ value: project.projectKey, label: project.displayName })),
+    ...pickableProjectGroups(projectGroups).map((project) => ({
+      value: project.projectKey,
+      label: project.displayName,
+    })),
   ];
   return {
     projects,
@@ -1099,6 +1111,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
+  const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
   const handleProjectSettings = useStableCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
@@ -2819,6 +2832,49 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
+                            {project && canOrganizeProjectGroup(project.memberProjects) ? (
+                              // Pinned rows always show their pin; others on hover.
+                              <span
+                                className={cn(
+                                  "ml-auto flex",
+                                  !project.pinned &&
+                                    "opacity-0 in-data-highlighted:opacity-100 pointer-coarse:opacity-100",
+                                )}
+                              >
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost-muted"
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  title={
+                                    project.pinned
+                                      ? `Unpin ${project.displayName}`
+                                      : `Pin ${project.displayName}`
+                                  }
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void updateProjectGroup(
+                                      project.memberProjects,
+                                      { pinned: !project.pinned },
+                                      project.pinned
+                                        ? "Failed to unpin project"
+                                        : "Failed to pin project",
+                                    );
+                                  }}
+                                >
+                                  {project.pinned ? (
+                                    <>
+                                      <PinIcon className="size-3.5 in-data-highlighted:hidden" />
+                                      <PinOffIcon className="hidden size-3.5 in-data-highlighted:block" />
+                                    </>
+                                  ) : (
+                                    <PinIcon className="size-3.5" />
+                                  )}
+                                </Button>
+                              </span>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -2826,7 +2882,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
+                                className={
+                                  canOrganizeProjectGroup(project.memberProjects)
+                                    ? undefined
+                                    : "ml-auto"
+                                }
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);
