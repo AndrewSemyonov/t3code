@@ -107,6 +107,7 @@ export class Simulator {
   readonly device: DeviceClassId;
   readonly udid: string;
   private readonly session: string;
+  private appLandscape = false;
 
   private constructor(device: DeviceClassId, udid: string, session: string) {
     this.device = device;
@@ -125,9 +126,14 @@ export class Simulator {
       )
     ).stdout.trim();
     const simulator = new Simulator(device, udid, `t3-design-${device}-${runId}`);
-    await suppressIosSystemFollowUps(udid);
-    await simctl("boot", udid);
-    await simctl("bootstatus", udid, "-b");
+    try {
+      await suppressIosSystemFollowUps(udid);
+      await simctl("boot", udid);
+      await simctl("bootstatus", udid, "-b");
+    } catch (error) {
+      await simulator.delete();
+      throw error;
+    }
     return simulator;
   }
 
@@ -353,24 +359,28 @@ export class Simulator {
       await delay(2_500);
     }
     // A fold sets the Duo's shape itself.
-    if (!pose.fold) await this.orient(pose.orientation ?? "portrait");
+    this.appLandscape = pose.fold
+      ? pose.fold === "open"
+      : await this.orient(pose.orientation ?? "portrait");
   }
 
   /** agent-device names rotations from the natural orientation, so try each until the shape fits. */
-  private async orient(shape: "portrait" | "landscape") {
-    const fits = async () => {
+  /** Returns whether the app now lays out in landscape. */
+  private async orient(shape: "portrait" | "landscape"): Promise<boolean> {
+    const isLandscape = async () => {
       const { width, height } = (await this.snapshot()).viewport;
-      return width > height === (shape === "landscape");
+      return width > height;
     };
-    if (await fits()) return;
+    if ((await isLandscape()) === (shape === "landscape")) return shape === "landscape";
     for (const name of shape === "landscape"
       ? ["landscape-left", "landscape-right"]
       : ["portrait"]) {
       await this.agent(["orientation", name]);
       await delay(2_000);
-      if (await fits()) return;
+      if ((await isLandscape()) === (shape === "landscape")) return shape === "landscape";
     }
     // A portrait-locked app keeps its shape when the device turns; the capture shows that.
+    return isLandscape();
   }
 
   async screenshot(destination: string, pose: Pose) {
@@ -382,10 +392,9 @@ export class Simulator {
       ...(pose.fold ? ["--display", pose.fold === "closed" ? "1" : "3"] : []),
       destination,
     );
-    // Headless displays stay portrait when the device rotates.
-    const landscape = pose.orientation === "landscape" || pose.fold === "open";
+    // Headless displays stay portrait when the app rotates.
     const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
-    if (landscape && height > width) {
+    if (this.appLandscape && height > width) {
       await run("sips", ["--rotate", pose.fold ? "90" : "270", destination]);
     }
   }

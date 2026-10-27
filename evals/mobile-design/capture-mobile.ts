@@ -239,8 +239,9 @@ export async function captureMobile(input: {
     );
     for (const device of devices) {
       input.log(`${device}: creating the simulator`);
-      const simulator = await Simulator.create(device, runId);
+      let simulator: Simulator | null = null;
       try {
+        simulator = await Simulator.create(device, runId);
         // iPadOS windowing keeps full-screen apps portrait unless it is off.
         if (device === "ipad") await ensureIosFullScreenAppsMode(simulator.udid);
         await simulator.install(appPath);
@@ -290,7 +291,7 @@ export async function captureMobile(input: {
         // One device failing should not cost the others their captures.
         input.log(`${device}: stopped: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
-        await simulator.delete();
+        await simulator?.delete();
       }
     }
   } finally {

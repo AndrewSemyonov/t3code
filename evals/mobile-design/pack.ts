@@ -32,7 +32,9 @@ const escapeXml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /** Lays tiles out in one row, scaled to a shared height, each with a label above it. */
-async function contactSheet(tiles: ReadonlyArray<Tile>, destination: string): Promise<void> {
+async function contactSheet(
+  tiles: ReadonlyArray<Tile>,
+): Promise<{ readonly data: Buffer; readonly width: number; readonly height: number }> {
   const images = await Promise.all(
     tiles.map(async (tile) => ({ ...tile, meta: await sharp(tile.file).metadata() })),
   );
@@ -59,13 +61,18 @@ async function contactSheet(tiles: ReadonlyArray<Tile>, destination: string): Pr
       ];
     }),
   );
-  await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-  await sharp({
+  const data = await sharp({
     create: { width: sheetWidth, height: sheetHeight, channels: 3, background: "#1c1c1e" },
   })
     .composite(layers.flat())
     .png()
-    .toFile(destination);
+    .toBuffer();
+  return { data, width: sheetWidth, height: sheetHeight };
+}
+
+async function writeImage(data: Buffer, destination: string) {
+  await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+  await NodeFSP.writeFile(destination, data);
 }
 
 /** Poses whose screenshots share a shape, so they sit well side by side. */
@@ -112,7 +119,7 @@ export async function buildPack(input: {
     }
     for (const [group, tiles] of groups) {
       const file = NodePath.join("screens", group, `${scene.id}.png`);
-      await contactSheet(tiles, NodePath.join(pack, file));
+      await writeImage((await contactSheet(tiles)).data, NodePath.join(pack, file));
       entries.push({ file, scene: scene.title, view: group });
     }
     const desktop = input.desktop.find((shot) => shot.scene === scene.id && !shot.problem);
@@ -120,14 +127,12 @@ export async function buildPack(input: {
       const phone = shots.find((shot) => shot.pose === "iphone-dark");
       const tablet = shots.find((shot) => shot.pose === "ipad-landscape-dark");
       const file = NodePath.join("desktop", `${scene.id}.png`);
-      await contactSheet(
-        [
-          { file: at(desktop.file), label: "Desktop web, 1440×900" },
-          ...(tablet ? [{ file: at(tablet.file), label: "iPad landscape" }] : []),
-          ...(phone ? [{ file: at(phone.file), label: "iPhone" }] : []),
-        ],
-        NodePath.join(pack, file),
-      );
+      const pair = await contactSheet([
+        { file: at(desktop.file), label: "Desktop web, 1440×900" },
+        ...(tablet ? [{ file: at(tablet.file), label: "iPad landscape" }] : []),
+        ...(phone ? [{ file: at(phone.file), label: "iPhone" }] : []),
+      ]);
+      await writeImage(pair.data, NodePath.join(pack, file));
       entries.push({ file, scene: scene.title, view: "desktop pair" });
     }
   }
@@ -139,38 +144,34 @@ export async function buildPack(input: {
     const file = NodePath.join("flows", `${flow.id}.png`);
     // Rows of five keep each phone frame large enough to read.
     const rows = await Promise.all(
-      Array.from({ length: Math.ceil(result.frames.length / 5) }, async (_, row) => {
-        const rowFile = NodePath.join(pack, "flows", `${flow.id}-${row}.png`);
-        await contactSheet(
+      Array.from({ length: Math.ceil(result.frames.length / 5) }, (_, row) =>
+        contactSheet(
           result.frames.slice(row * 5, row * 5 + 5).map((frame, index) => ({
             file: at(frame.file),
             label: `${row * 5 + index}. ${frame.action}`,
           })),
-          rowFile,
-        );
-        return rowFile;
-      }),
+        ),
+      ),
     );
-    const metas = await Promise.all(rows.map((row) => sharp(row).metadata()));
     let top = 0;
-    await sharp({
+    const filmstrip = await sharp({
       create: {
-        width: Math.max(...metas.map((meta) => meta.width ?? 0)),
-        height: metas.reduce((sum, meta) => sum + (meta.height ?? 0), 0),
+        width: Math.max(...rows.map((row) => row.width)),
+        height: rows.reduce((sum, row) => sum + row.height, 0),
         channels: 3,
         background: "#1c1c1e",
       },
     })
       .composite(
-        rows.map((row, index) => {
-          const layer = { input: row, left: 0, top };
-          top += metas[index]!.height ?? 0;
+        rows.map((row) => {
+          const layer = { input: row.data, left: 0, top };
+          top += row.height;
           return layer;
         }),
       )
       .png()
-      .toFile(NodePath.join(pack, file));
-    await Promise.all(rows.map((row) => NodeFSP.rm(row)));
+      .toBuffer();
+    await writeImage(filmstrip, NodePath.join(pack, file));
     entries.push({ file, scene: flow.title, view: "flow" });
     flowRows.push(
       `| ${flow.title} | ${result.taps} | ${result.screens} | \`${file}\`${result.problem ? ` (stopped early: ${result.problem.split("\n")[0]})` : ""} |`,
