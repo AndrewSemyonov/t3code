@@ -8,7 +8,7 @@ import {
 } from "./composerFooterLayout";
 
 describe("resolveComposerTimelineInset", () => {
-  it("keeps timeline padding stable when the model-only strip appears on collapse", () => {
+  it("keeps timeline padding stable when the composer compacts and expands again", () => {
     const expanded = resolveComposerTimelineInset({
       currentInset: 0,
       overlayHeight: 172,
@@ -18,7 +18,6 @@ describe("resolveComposerTimelineInset", () => {
       currentInset: expanded,
       overlayHeight: 110,
       isResting: true,
-      restingOnlyHeight: 32,
     });
     expect(collapsed).toBe(expanded);
     expect(

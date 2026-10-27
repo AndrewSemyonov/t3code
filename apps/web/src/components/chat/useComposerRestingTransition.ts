@@ -19,7 +19,6 @@ export function useComposerRestingTransition(
   const previousCollapsedRef = useRef(isCollapsed);
   const previousRestingRef = useRef(isResting);
   const previousHeightRef = useRef<number | null>(null);
-  const previousModelStripHeightRef = useRef<number | null>(null);
   const previousContentOffsetsRef = useRef<{
     promptFromTop: number | null;
     promptHeight: number | null;
@@ -60,8 +59,6 @@ export function useComposerRestingTransition(
     const element = elementRef.current;
     const footer = element?.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
     element?.style.removeProperty("overflow");
-    element?.style.removeProperty("clip-path");
-    element?.style.removeProperty("overflow-clip-margin");
     element
       ?.querySelector<HTMLElement>('[data-chat-composer-surface="true"]')
       ?.style.removeProperty("height");
@@ -71,22 +68,6 @@ export function useComposerRestingTransition(
     footer?.style.removeProperty("left");
     footer?.style.removeProperty("right");
     footer?.style.removeProperty("height");
-    const shell = element?.closest<HTMLElement>('[data-slot="composer-shell"]');
-    shell?.removeAttribute("data-model-strip-transition");
-    const modelStrip = shell?.querySelector<HTMLElement>('[data-composer-model-strip="true"]');
-    for (const property of [
-      "position",
-      "top",
-      "visibility",
-      "height",
-      "min-height",
-      "padding-top",
-      "align-items",
-      "z-index",
-      "pointer-events",
-    ]) {
-      modelStrip?.style.removeProperty(property);
-    }
     clearOverlayPin();
   };
 
@@ -110,16 +91,11 @@ export function useComposerRestingTransition(
     );
     const action = visibleTransitionElement('[data-chat-composer-transition-actions="true"]');
     const footer = element.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
-    const continuousControls =
-      element.dataset.inlineRestingControls === "true" || element.dataset.modelOnlyStrip === "true";
+    const continuousControls = element.dataset.inlineRestingControls === "true";
     const controls = nextIsCollapsed
       ? restingControlsRef.current
       : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
 
-    const shell = element.closest<HTMLElement>('[data-slot="composer-shell"]');
-    const modelStrip = shell?.querySelector<HTMLElement>('[data-composer-model-strip="true"]');
-    const interruptedStripHeight =
-      animationRef.current && modelStrip ? modelStrip.getBoundingClientRect().height : null;
     const interruptedAnimation = animationRef.current;
     const interruptedPromptTop = interruptedAnimation
       ? (prompt?.getBoundingClientRect().top ?? null)
@@ -156,7 +132,6 @@ export function useComposerRestingTransition(
 
     const nextRect = element.getBoundingClientRect();
     const nextHeight = nextRect.height;
-    const nextModelStripHeight = modelStrip?.getBoundingClientRect().height ?? null;
     // The chat view resize-observes the overlay to place the timeline
     // inset, the scroll-to-end pill, and the mini player. Publishing the
     // destination height here turns that feedback into one update instead
@@ -195,14 +170,6 @@ export function useComposerRestingTransition(
       const duration =
         interruptedHeight !== null && !targetChanged ? remainingDuration : animationDurationMs;
       element.style.overflow = "clip";
-      if (modelStrip) {
-        const controlsClearance = Math.max(
-          nextModelStripHeight ?? 0,
-          previousModelStripHeightRef.current ?? 0,
-        );
-        element.style.overflowClipMargin = `${controlsClearance}px`;
-        element.style.clipPath = `inset(0 0 -${controlsClearance}px 0)`;
-      }
       surface.style.height = "100%";
 
       if (overlay && overlayHeight !== null) {
@@ -225,31 +192,6 @@ export function useComposerRestingTransition(
           footer.style.left = "1px";
           footer.style.right = "1px";
         }
-      }
-
-      let stripAnimation: Animation | null = null;
-      if (modelStrip) {
-        const stripHeight = modelStrip.getBoundingClientRect().height;
-        const stripOverlap = -Number.parseFloat(getComputedStyle(modelStrip).marginTop);
-        const fromHeight =
-          interruptedStripHeight ??
-          (previousCollapsedRef.current
-            ? (previousModelStripHeightRef.current ?? stripHeight)
-            : stripOverlap);
-        const toHeight = nextIsCollapsed ? stripHeight : stripOverlap;
-        modelStrip.style.position = "relative";
-        modelStrip.style.top = "auto";
-        modelStrip.style.visibility = "visible";
-        modelStrip.style.minHeight = "0";
-        modelStrip.style.paddingTop = "0";
-        modelStrip.style.alignItems = "flex-end";
-        modelStrip.style.pointerEvents = "none";
-        modelStrip.style.zIndex = "20";
-        shell?.setAttribute("data-model-strip-transition", "true");
-        stripAnimation = modelStrip.animate(
-          [{ height: `${fromHeight}px` }, { height: `${toHeight}px` }],
-          { duration, easing: COMPOSER_RESTING_TRANSITION_EASING, fill: "both" },
-        );
       }
 
       const animation = element.animate(
@@ -279,7 +221,7 @@ export function useComposerRestingTransition(
         (previousContentOffsetsRef.current.actionFromBottom === null
           ? null
           : previousBottom - previousContentOffsetsRef.current.actionFromBottom);
-      const contentAnimations: Animation[] = stripAnimation ? [stripAnimation] : [];
+      const contentAnimations: Animation[] = [];
       const animateContentPosition = (
         content: HTMLElement | null,
         previousTop: number | null,
@@ -406,7 +348,6 @@ export function useComposerRestingTransition(
         contentAnimationsRef.current = [];
         stateChangeAnimationsRef.current = [];
         animation.cancel();
-        stripAnimation?.cancel();
         clearTransitionStyles();
       };
       void animation.finished.catch(() => undefined).then(() => finishTransition(false));
@@ -423,7 +364,6 @@ export function useComposerRestingTransition(
 
     previousCollapsedRef.current = nextIsCollapsed;
     previousHeightRef.current = nextHeight;
-    previousModelStripHeightRef.current = nextModelStripHeight;
     previousContentOffsetsRef.current = {
       promptFromTop: nextPromptTop === null ? null : nextPromptTop - nextRect.top,
       promptHeight: nextPromptRect?.height ?? null,

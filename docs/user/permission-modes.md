@@ -1,7 +1,9 @@
 # Permission modes
 
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
-composer; it applies to that thread.
+composer; it applies to that thread. While a thread uses your default mode, the composer shows no
+permissions control: open **Permissions** from the effort menu or press `mod+shift+a`. A thread on
+another mode shows that mode next to the model.
 
 Set the default for new threads in **Settings → Threads → New threads → Permissions**.
 Projects can override the environment default. New threads use this setting rather than the

@@ -56,7 +56,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal, flushSync } from "react-dom";
+import { flushSync } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -86,6 +86,7 @@ import {
 import {
   isInsideCollapsedComposerControls,
   isInsideRestingComposerControlScope,
+  markOpenToPermissions,
 } from "./composerEventScope";
 import {
   type ComposerFileAttachment,
@@ -313,6 +314,8 @@ export interface ChatComposerHandle {
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
+  /** The composer is compacted (resting) into one row. */
+  isResting: () => boolean;
   isCaretAtStart: () => boolean;
   compactContext: () => void;
   readSnapshot: () => {
@@ -424,6 +427,7 @@ export interface ChatComposerProps {
   threadSyncPhase: ThreadSyncPhase | null;
 
   runtimeMode: RuntimeMode;
+  defaultRuntimeMode?: RuntimeMode;
   interactionMode: ProviderInteractionMode;
 
   lockedProvider: ProviderDriverKind | null;
@@ -447,9 +451,6 @@ export interface ChatComposerProps {
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
-  restingControlsHost: HTMLDivElement | null;
-  restingControlsHaveLeadingContext: boolean;
-  onRestingControlsVisibilityChange: (visible: boolean) => void;
   getTimelineScrollableNode: () => HTMLElement | null;
   isTimelineAtLogicalEnd: () => boolean;
   timelineOverflows: boolean;
@@ -582,9 +583,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
-    restingControlsHost,
-    restingControlsHaveLeadingContext,
-    onRestingControlsVisibilityChange,
     getTimelineScrollableNode,
     isTimelineAtLogicalEnd,
     timelineOverflows,
@@ -1260,7 +1258,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
-  } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
+  } = useRestingComposerControlsLayout(inlineRestingControlsHost);
   const {
     attachControls: attachExpandedComposerControls,
     hiddenBlockCount: expandedControlsHiddenBlockCount,
@@ -2323,16 +2321,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
     : standaloneComposerImages;
   const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
-  const showInlineRestingControls = composerControlsCollapsed && restingControlsHost === null;
-  const composerControlsVisibleInStrip =
-    composerControlsCollapsed && restingControlsHost !== null && restingControlsVisible;
-  const composerControlsHidden = composerControlsCollapsed && !restingControlsVisible;
+  // Compacted desktop composers carry their controls in the one row; the collapsed mobile web
+  // composer keeps a second controls row inside the card.
+  const showInlineRestingControls = isComposerCollapsedMobile;
+  // The resting layout hook measures only the collapsed mobile row; the compacted desktop row
+  // relies on truncation, so it ignores whatever that hook last measured.
+  const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
   if (composerControlsHidden && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
-  useLayoutEffect(() => {
-    onRestingControlsVisibilityChange(composerControlsVisibleInStrip);
-  }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange]);
   useLayoutEffect(() => {
     onRestingChange(isComposerResting);
   }, [isComposerResting, onRestingChange]);
@@ -2482,12 +2479,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
   ]);
 
-  const restingHiddenBlockCount = composerControlsCollapsed
+  const restingHiddenBlockCount = showInlineRestingControls
     ? restingControlsHiddenBlockCount
-    : expandedControlsHiddenBlockCount;
-  const iconOnlyBlockCount = composerControlsCollapsed
+    : composerControlsCollapsed
+      ? 0
+      : expandedControlsHiddenBlockCount;
+  const iconOnlyBlockCount = showInlineRestingControls
     ? restingControlsIconOnlyBlockCount
-    : expandedControlsIconOnlyBlockCount;
+    : composerControlsCollapsed
+      ? 0
+      : expandedControlsIconOnlyBlockCount;
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2506,6 +2507,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       planModeUiEnabled={planModeUiEnabled}
       interactionMode={interactionMode}
       compatibleRuntimeMode={compatibleRuntimeMode}
+      defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       toggleInteractionMode={toggleInteractionMode}
       handleRuntimeModeChange={handleRuntimeModeChange}
@@ -2513,12 +2515,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerControlsHidden={composerControlsHidden}
       restingHiddenBlockCount={restingHiddenBlockCount}
       iconOnlyBlockCount={iconOnlyBlockCount}
-      showInlineRestingControls={showInlineRestingControls}
-      showLeadingSeparator={
-        composerControlsCollapsed &&
-        restingControlsHost !== null &&
-        restingControlsHaveLeadingContext
-      }
       showProviderUnavailable={showProviderUnavailable}
       providerSetupInstanceId={providerSetupInstanceId}
       onOpenProviderSetup={onOpenProviderSetup}
@@ -3090,10 +3086,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         if (!trigger) return;
         trigger.focus({ preventScroll: true });
+        if (command === "composer.mode") markOpenToPermissions(trigger);
         trigger.click();
       },
       compactContext: compactThreadContextStable,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      isResting: () => isComposerResting,
       isCaretAtStart: () => {
         const range = composerEditorRef.current?.readSelectionRange();
         return range !== undefined && range.start === 0 && range.end === 0;
@@ -3232,6 +3230,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacementStable,
       isComposerModelPickerOpen,
+      isComposerResting,
       openModelPickerStable,
       readComposerSnapshotStable,
       resetComposerTrigger,
@@ -3382,23 +3381,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
-      {composerControlsCollapsed && restingControlsHost
-        ? createPortal(
-            <div
-              ref={attachRestingComposerControls}
-              data-chat-composer-resting-controls="true"
-              aria-hidden={restingControlsVisible ? undefined : true}
-              inert={restingControlsVisible ? undefined : true}
-              className={cn(
-                "relative flex w-max min-w-0 max-w-full items-center gap-1 font-normal text-muted-foreground/70 [&_button]:text-xs!",
-                !restingControlsVisible && "invisible",
-              )}
-            >
-              {composerControls}
-            </div>,
-            restingControlsHost,
-          )
-        : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
@@ -3473,10 +3455,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
-          data-inline-resting-controls={restingControlsHost === null ? "true" : undefined}
-          data-model-only-strip={
-            restingControlsHost?.closest("[data-composer-model-strip]") ? "true" : undefined
-          }
+          data-inline-resting-controls="true"
           className={composerProviderState.composerFrameClassName}
         >
           <div
@@ -3660,10 +3639,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
                     )}
-                    placeholderClassName={cn(
-                      isComposerResting &&
-                        "flex items-center overflow-hidden whitespace-nowrap leading-8",
-                    )}
+                    placeholderClassName={cn(isComposerResting && "truncate leading-8")}
                     onChange={onPromptChangeStable}
                     onVisibleSelectionChange={expandComposerForEditorChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
@@ -3772,6 +3748,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {isComposerResting ? (
+                    <div
+                      // Resting scope: focusing these controls must not expand the composer.
+                      data-chat-composer-resting-controls="true"
+                      // Width gives way in order: secondary trait text, then the model (label
+                      // truncates, provider icon drops). Effort and permissions never clip.
+                      className="flex min-w-0 items-center gap-0.5 [&_button]:text-xs! @max-[600px]/composer-surface:[&_[data-composer-secondary-trait]]:hidden [&_[data-chat-provider-model-picker-label]]:max-w-24 @max-[520px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:max-w-14 @max-[520px]/composer-surface:[&_[data-chat-provider-model-picker-icon]]:hidden @max-[520px]/composer-surface:[&_[data-chat-provider-model-picker]]:min-w-0"
+                    >
+                      {composerControls}
+                    </div>
+                  ) : null}
                   {composerAttachButton}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
@@ -3844,7 +3831,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="absolute bottom-2 inset-x-4 min-w-0"
                 >
                   <div
-                    ref={restingComposerControlsRef}
+                    ref={attachRestingComposerControls}
                     data-chat-composer-resting-controls="true"
                     aria-hidden={restingControlsVisible ? undefined : true}
                     inert={restingControlsVisible ? undefined : true}

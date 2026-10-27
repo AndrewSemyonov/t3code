@@ -20,6 +20,9 @@ export function useComposerMenuProps() {
           if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
             return false;
           }
+          // A compacted composer stays compacted: focus goes back to the trigger in its row
+          // (resting scope), not the editor, which would expand it.
+          if (composerRef.current?.isResting()) return true;
           composerRef.current?.focusAtEnd();
           return false;
         }
@@ -46,4 +49,23 @@ export function isInsideRestingComposerControlScope(target: EventTarget | null):
       target.closest("[data-composer-context-control]") !== null ||
       isInsideComposerFloatingLayer(target))
   );
+}
+
+/**
+ * composer.mode marks the trigger it opens; the menu's onOpenChangeComplete then moves focus
+ * to the checked permission in that menu's own popup, after the menu placed its own focus.
+ */
+export function markOpenToPermissions(trigger: HTMLElement): void {
+  trigger.dataset.openToPermissions = "true";
+}
+
+export function focusRequestedPermission(open: boolean, trigger: HTMLElement | null): void {
+  if (!trigger?.dataset.openToPermissions) return;
+  delete trigger.dataset.openToPermissions;
+  if (!open) return;
+  const popupId = trigger.getAttribute("aria-controls");
+  const popup = popupId ? document.getElementById(popupId) : null;
+  popup
+    ?.querySelector<HTMLElement>("[data-composer-permissions] [aria-checked='true']")
+    ?.focus({ preventScroll: true });
 }

@@ -23,8 +23,8 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { memo } from "react";
-import { GaugeIcon } from "lucide-react";
+import { memo, type ReactNode, useRef } from "react";
+import { GaugeIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -39,14 +39,10 @@ import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  ComposerControlIcon,
-  type ComposerControlSize,
-} from "./ComposerControl";
-import { useComposerMenuProps } from "./composerEventScope";
+import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
+import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -322,6 +318,12 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  /** Extra section shown below the traits in the picker popup (Permissions). */
+  extraMenuContent?: ReactNode;
+  /** This trigger also answers composer.mode (while the permissions chip is hidden). */
+  extraMenuOwnsModeShortcut?: boolean;
+  /** Extra tooltip text naming what else the menu holds. */
+  extraMenuHint?: string;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -519,6 +521,9 @@ export const TraitsPicker = memo(function TraitsPicker({
   planModeEnabled,
   triggerClassName,
   isComposerOwned,
+  extraMenuContent,
+  extraMenuOwnsModeShortcut,
+  extraMenuHint,
   size = "sm",
   hidden = false,
   disabled = false,
@@ -531,6 +536,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -555,7 +561,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel } = buildTraitsTriggerDisplay({
+  const {
+    label: triggerLabel,
+    speedLabel,
+    otherLabels,
+  } = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
@@ -564,6 +574,25 @@ export const TraitsPicker = memo(function TraitsPicker({
     reportedModelSelection,
   });
   const isCodexStyle = provider === "codex";
+  // In the composer the glyph has no word, so the tooltip and label name the control.
+  const triggerDescription = isComposerOwned
+    ? [`Effort: ${triggerLabel}`, extraMenuHint].filter(Boolean).join(" · ")
+    : triggerLabel;
+  const effortGlyph =
+    isComposerOwned &&
+    primarySelectDescriptor &&
+    REASONING_SELECT_DESCRIPTOR_IDS.has(primarySelectDescriptor.id)
+      ? resolveEffortGlyph(
+          primarySelectDescriptor,
+          ultrathinkPromptControlled
+            ? "ultrathink"
+            : getDescriptorStringValue(
+                primarySelectDescriptor,
+                instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
+                reportedModelSelection,
+              ),
+        )
+      : null;
 
   return (
     <Menu
@@ -571,6 +600,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       onOpenChange={(open) => {
         setIsMenuOpen(open && !disabled);
       }}
+      onOpenChangeComplete={(open) => focusRequestedPermission(open, triggerRef.current)}
     >
       <Tooltip>
         <TooltipTrigger
@@ -578,9 +608,16 @@ export const TraitsPicker = memo(function TraitsPicker({
             <MenuTrigger
               render={
                 <ComposerControl
+                  ref={triggerRef}
                   disabled={disabled}
-                  aria-label={triggerLabel}
-                  data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
+                  aria-label={triggerDescription}
+                  data-composer-shortcut={
+                    isComposerOwned
+                      ? extraMenuOwnsModeShortcut
+                        ? "composer.effort composer.mode"
+                        : "composer.effort"
+                      : undefined
+                  }
                   size={size}
                   className={cn(
                     isCodexStyle
@@ -593,7 +630,45 @@ export const TraitsPicker = memo(function TraitsPicker({
             />
           }
         >
-          {isCodexStyle ? (
+          {effortGlyph ? (
+            <span className="flex items-center gap-1.5">
+              {effortGlyph.special ? null : (
+                <EffortGlyph count={effortGlyph.count} filled={effortGlyph.filled} size={size} />
+              )}
+              {effortGlyph.special ? (
+                <>
+                  <span data-composer-control-label>{effortGlyph.special}</span>
+                  {/* Icon-only footers hide labels and reveal this instead. */}
+                  <GaugeIcon
+                    aria-hidden="true"
+                    data-composer-control-compact-icon
+                    className="invisible absolute size-3.5"
+                  />
+                </>
+              ) : (
+                <span data-composer-control-label className="sr-only">
+                  {triggerLabel}
+                </span>
+              )}
+              {speedLabel ? (
+                <span aria-hidden="true" className="flex items-center -space-x-1">
+                  <ZapIcon className="size-3 fill-current" />
+                  {speedLabel === "Ultrafast" ? <ZapIcon className="size-3 fill-current" /> : null}
+                </span>
+              ) : null}
+              {otherLabels.length > 0 ? (
+                <span
+                  aria-hidden="true"
+                  // A label, so icon-only footers drop it; compacted rows drop it before the model.
+                  data-composer-control-label
+                  data-composer-secondary-trait
+                  className="max-w-24 truncate text-xs"
+                >
+                  {otherLabels.join(" · ")}
+                </span>
+              ) : null}
+            </span>
+          ) : isCodexStyle ? (
             <span
               className={cn(
                 "flex min-w-0 w-full items-center",
@@ -604,17 +679,15 @@ export const TraitsPicker = memo(function TraitsPicker({
               <span data-composer-control-label className="min-w-0 truncate">
                 {triggerLabel}
               </span>
-              <ComposerControlChevron size={size} />
             </span>
           ) : (
             <>
               <ComposerControlIcon icon={GaugeIcon} size={size} />
               <span data-composer-control-label>{triggerLabel}</span>
-              <ComposerControlChevron size={size} />
             </>
           )}
         </TooltipTrigger>
-        <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+        <TooltipPopup side="top">{triggerDescription}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
@@ -630,6 +703,12 @@ export const TraitsPicker = memo(function TraitsPicker({
           planModeEnabled={planModeEnabled}
           {...persistence}
         />
+        {extraMenuContent ? (
+          <>
+            <MenuDivider />
+            {extraMenuContent}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
