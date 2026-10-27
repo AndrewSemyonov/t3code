@@ -146,10 +146,11 @@ async function captureFlow(
   flow: Flow,
   targets: LinkTargets,
   outDirectory: string,
+  poseProblem: string | undefined,
 ): Promise<FlowResult> {
   const frames: Array<{ file: string; action: string }> = [];
   const signatures = new Set<string>();
-  let problem: string | undefined;
+  let problem = poseProblem;
   const frame = async (action: string) => {
     const file = NodePath.join("captures", "flows", flow.id, `${frames.length}.png`);
     await delay(1_200);
@@ -179,7 +180,7 @@ async function captureFlow(
       await frame(action);
     }
   } catch (error) {
-    problem = error instanceof Error ? error.message : String(error);
+    problem ??= error instanceof Error ? error.message : String(error);
   }
   return {
     flow: flow.id,
@@ -306,6 +307,7 @@ export async function captureMobile(input: {
               flow,
               targets,
               input.outDirectory,
+              flowProblem,
             );
             if (result.problem) input.log(`flow ${flow.id}: ${result.problem}`);
             flows.push(result);
@@ -325,6 +327,12 @@ export async function captureMobile(input: {
               file: NodePath.join("captures", pose.id, `${scene}.png`),
               problem,
             });
+          }
+        }
+        if (input.flows && device === "iphone") {
+          for (const flow of FLOWS) {
+            if (flows.some((result) => result.flow === flow.id)) continue;
+            flows.push({ flow: flow.id, taps: 0, screens: 0, frames: [], problem });
           }
         }
       } finally {

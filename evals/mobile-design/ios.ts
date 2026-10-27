@@ -229,7 +229,9 @@ export class Simulator {
       if (snapshot && !prompted && Date.now() - started > 4_000) return;
       await delay(500);
     }
-    throw new Error(`no one answered the prompt to open ${url.split("?")[0]}`);
+    throw new Error(
+      `the prompt to open ${url.split("?")[0]} was not answered, or the screen could not be read`,
+    );
   }
 
   async agent(args: ReadonlyArray<string>, timeoutMs = 180_000): Promise<Record<string, unknown>> {
