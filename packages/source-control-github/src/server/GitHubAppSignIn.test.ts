@@ -362,6 +362,19 @@ describe("GitHubAppSignIn", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("keeps a batch off the app when any repository in it is not covered", () => {
+    const { layer } = harness({ signIns: { "github.com": session() }, handle: installedOn });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const sourceFor = (repositories: ReadonlyArray<string>) =>
+        credentials
+          .get("github.com", repositories)
+          .pipe(Effect.map((credential) => credential.source));
+      expect(yield* sourceFor(["pingdotgg/t3code", "acme/one"])).toBe("app");
+      expect(yield* sourceFor(["pingdotgg/t3code", "acme/two"])).toBe("gh");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reports which repositories the app reaches", () => {
     const { layer } = harness({ signIns: { "github.com": session() }, handle: installedOn });
     return Effect.gen(function* () {
@@ -521,17 +534,31 @@ describe("GitHubAppSignIn", () => {
 });
 
 describe("scopeMethodsToRepository", () => {
-  it.effect("scopes a call to the repository it names or the checkout it runs in", () => {
+  it.effect("scopes a call to every repository it names or the checkout it runs in", () => {
     const scoped = GitHubRequestPolicy.scopeMethodsToRepository({
       read: (_input: { readonly repository: string }) => GitHubRequestPolicy.GitHubRepositoryScope,
+      search: (_input: { readonly repositories: ReadonlyArray<string> }) =>
+        GitHubRequestPolicy.GitHubRepositoryScope,
+      stats: (_input: {
+        readonly changeRequests: ReadonlyArray<{ readonly repository: string }>;
+      }) => GitHubRequestPolicy.GitHubRepositoryScope,
       push: (_input: { readonly context: { readonly remoteUrl: string } }) =>
         GitHubRequestPolicy.GitHubRepositoryScope,
       viewer: (_input: { readonly host: string }) => GitHubRequestPolicy.GitHubRepositoryScope,
     });
     return Effect.gen(function* () {
-      expect(yield* scoped.read({ repository: "acme/one" })).toBe("acme/one");
-      expect(yield* scoped.push({ context: { remoteUrl: "git@github.com:acme/two.git" } })).toBe(
+      expect(yield* scoped.read({ repository: "acme/one" })).toEqual(["acme/one"]);
+      expect(yield* scoped.search({ repositories: ["acme/one", "acme/two"] })).toEqual([
+        "acme/one",
         "acme/two",
+      ]);
+      expect(
+        yield* scoped.stats({
+          changeRequests: [{ repository: "acme/one" }, { repository: "x/y" }],
+        }),
+      ).toEqual(["acme/one", "x/y"]);
+      expect(yield* scoped.push({ context: { remoteUrl: "git@github.com:acme/two.git" } })).toEqual(
+        ["acme/two"],
       );
       expect(yield* scoped.viewer({ host: "github.com" })).toBeNull();
     });

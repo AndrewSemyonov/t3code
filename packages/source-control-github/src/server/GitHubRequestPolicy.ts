@@ -30,30 +30,40 @@ export const PinnedGitHubCredential = Context.Reference<{
 });
 
 /**
- * The `owner/name` requests in scope are about, so the credential chosen for them can reach it:
- * the app sign-in only reaches repositories where the app is installed.
+ * The `owner/name` repositories requests in scope are about, so the credential chosen for them
+ * can reach all of them: the app sign-in only reaches repositories where the app is installed.
  */
-export const GitHubRepositoryScope = Context.Reference<string | null>(
+export const GitHubRepositoryScope = Context.Reference<ReadonlyArray<string> | null>(
   "@t3tools/source-control-github/server/GitHubRequestPolicy/GitHubRepositoryScope",
   { defaultValue: () => null },
 );
 
-function repositoryOf(input: unknown): string | null {
-  if (typeof input !== "object" || input === null) return null;
-  if ("repository" in input && typeof input.repository === "string") return input.repository;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+function repositoriesOf(input: unknown): ReadonlyArray<string> | null {
+  if (!isRecord(input)) return null;
+  if (typeof input.repository === "string") return [input.repository];
+  // Batched reads name several repositories, or change requests that each name one.
+  if (Array.isArray(input.repositories)) {
+    return input.repositories.filter((entry): entry is string => typeof entry === "string");
+  }
+  if (Array.isArray(input.changeRequests)) {
+    return input.changeRequests.flatMap((entry: unknown) =>
+      isRecord(entry) && typeof entry.repository === "string" ? [entry.repository] : [],
+    );
+  }
   // A checkout names its repository through the remote it pushes to.
-  return "context" in input &&
-    typeof input.context === "object" &&
-    input.context !== null &&
-    "remoteUrl" in input.context &&
-    typeof input.context.remoteUrl === "string"
-    ? repositoryPathFromRemoteUrl(input.context.remoteUrl)
-    : null;
+  const remote =
+    isRecord(input.context) && typeof input.context.remoteUrl === "string"
+      ? repositoryPathFromRemoteUrl(input.context.remoteUrl)
+      : null;
+  return remote === null ? null : [remote];
 }
 
 /**
- * Every method whose first argument names a `repository`, or a checkout `context`, runs in that
- * repository's scope.
+ * Every method whose first argument names its repositories (`repository`, `repositories`,
+ * `changeRequests`, or a checkout `context`) runs in their scope.
  */
 export function scopeMethodsToRepository<T extends object>(methods: T): T {
   const scoped: Record<string, unknown> = {};
@@ -63,10 +73,10 @@ export function scopeMethodsToRepository<T extends object>(methods: T): T {
         ? value
         : (...args: Array<unknown>) => {
             const result: unknown = Reflect.apply(value, methods, args);
-            const repository = repositoryOf(args[0]);
-            if (repository === null || !Effect.isEffect(result)) return result;
+            const repositories = repositoriesOf(args[0]);
+            if (repositories === null || !Effect.isEffect(result)) return result;
             // @effect-diagnostics-next-line anyUnknownInErrorContext:off - forwards each method's own effect, whose channels `T` keeps.
-            return Effect.provideService(result, GitHubRepositoryScope, repository);
+            return Effect.provideService(result, GitHubRepositoryScope, repositories);
           };
   }
   return scoped as T;

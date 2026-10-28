@@ -88,10 +88,10 @@ export type GitHubCredentialUnavailableError =
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
-    /** `repository` (`owner/name`) keeps the app sign-in off repositories it cannot reach. */
+    /** `repositories` (`owner/name`) keep the app sign-in off ones it cannot reach. */
     readonly get: (
       host: string,
-      repository?: string | null,
+      repositories?: string | ReadonlyArray<string> | null,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
     /** `rejected` is the token GitHub refused, so only the source holding it is refreshed. */
     readonly invalidate: (
@@ -235,7 +235,7 @@ export const make = Effect.gen(function* () {
   });
 
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, repository) {
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, repositories) {
       const host = normalizeHost(rawHost);
       if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
       const choice = yield* hostChoice(host);
@@ -259,9 +259,11 @@ export const make = Effect.gen(function* () {
         source: "app",
         fingerprint: yield* fingerprintOf(host, signedIn.value),
       } satisfies GitHubCredential;
-      if (repository == null || (yield* appSignIn.access(host, repository)) !== "not-covered") {
-        return app;
-      }
+      const scope = typeof repositories === "string" ? [repositories] : (repositories ?? []);
+      const reachesAll = yield* Effect.forEach(scope, (repository) =>
+        appSignIn.access(host, repository),
+      ).pipe(Effect.map((answers) => !answers.includes("not-covered")));
+      if (reachesAll) return app;
       // The user's own credential reaches what they can; the app token still reads public repositories.
       return yield* Cache.get(cache, cacheKey(host, choice?.account)).pipe(
         Effect.orElseSucceed(() => app),
