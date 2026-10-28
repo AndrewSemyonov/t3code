@@ -127,7 +127,12 @@ export const make = Effect.gen(function* () {
         return email;
       },
       catch: (cause) => new ClerkUserLookupFailed({ cause }),
-    });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: T3CHAT_REQUEST_TIMEOUT,
+        orElse: () => Effect.fail(new ClerkUserLookupFailed({ cause: "timed out" })),
+      }),
+    );
   });
 
   return T3ChatAccounts.of({

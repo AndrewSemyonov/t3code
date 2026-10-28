@@ -11,12 +11,11 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as RelayConfiguration from "../Config.ts";
 import * as T3ChatAccounts from "./T3ChatAccounts.ts";
 
+const clerk = vi.hoisted(() => ({
+  getUser: async (): Promise<unknown> => ({ primaryEmailAddress: { emailAddress: "a@b.co" } }),
+}));
 vi.mock("@clerk/backend", () => ({
-  createClerkClient: () => ({
-    users: {
-      getUser: async () => ({ primaryEmailAddress: { emailAddress: "a@b.co" } }),
-    },
-  }),
+  createClerkClient: () => ({ users: { getUser: () => clerk.getUser() } }),
 }));
 
 const SECRET = "shared-link-secret";
@@ -151,6 +150,20 @@ describe("T3ChatAccounts", () => {
       expect(error._tag).toBe("T3ChatRequestFailed");
     }).pipe(provide(client));
   });
+
+  it.effect("times out when Clerk stalls on the email lookup", () =>
+    Effect.gen(function* () {
+      const getUser = clerk.getUser;
+      clerk.getUser = () => new Promise(() => {});
+      const accounts = yield* T3ChatAccounts.T3ChatAccounts;
+      const fiber = yield* Effect.forkChild(Effect.flip(accounts.createLinkUrl({ userId: "u" })));
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(fiber).pipe(
+        Effect.ensuring(Effect.sync(() => (clerk.getUser = getUser))),
+      );
+      expect(error._tag).toBe("ClerkUserLookupFailed");
+    }).pipe(provide(fakeT3Chat({}).client)),
+  );
 
   it.effect("reports itself unavailable without a shared secret", () =>
     Effect.gen(function* () {

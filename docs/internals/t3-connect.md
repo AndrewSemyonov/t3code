@@ -140,9 +140,9 @@ short-lived token naming the Clerk user and email; the user confirms it while
 signed in to T3 Chat, and T3 Chat stores the link. T3 Chat owns the link and the
 plan, so the relay keeps no copy. It asks T3 Chat only when an account reaches
 its normal cap for a new environment, and any failure keeps the normal cap.
-An environment that already holds an allocation restarts without asking, so a
+An environment that already holds a counted slot restarts without asking, so a
 downgrade or a T3 Chat outage only blocks new environments. A manual override
-row stays the exact cap
+row replaces the default for new environments, and Premier does not raise it
 ([limits](../../infra/relay/src/environments/ManagedTunnelLimits.ts)).
 
 ## The relay client follows the server's pin

@@ -68,7 +68,7 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
       }`;
     case "RelayEnvironmentLinkLimitExceededError":
       return error.maxTunnels < T3CHAT_PREMIER_TUNNEL_LIMIT
-        ? `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment, or link a T3 Chat Premier account in your T3 Connect account settings on web or desktop to raise the limit to ${T3CHAT_PREMIER_TUNNEL_LIMIT}.`
+        ? `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment, or link a T3 Chat Premier account in your T3 Connect account settings on web or desktop to raise the default limit to ${T3CHAT_PREMIER_TUNNEL_LIMIT}.`
         : `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
     case "RelayAgentActivityPublishProofExpiredError":
       return "Relay rejected an expired agent activity publish proof.";
