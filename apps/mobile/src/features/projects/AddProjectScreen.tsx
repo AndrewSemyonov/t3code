@@ -998,6 +998,10 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   );
   const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const checkPublishedAppAccess = useAtomCommand(sourceControlEnvironment.checkAppAccess, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -1095,6 +1099,12 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           Dialog.alert(
             `Could not create the ${publishTarget.definition.label} repository`,
             errorMessage(Cause.squash(publishResult.cause)),
+          );
+        } else {
+          void suggestAppAccessForRemote(
+            checkPublishedAppAccess,
+            environment.environmentId,
+            publishResult.value.remoteUrl,
           );
         }
       });
