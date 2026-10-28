@@ -1,11 +1,14 @@
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 import { stubGlobal } from "../../../test/render";
 import {
   EnvironmentId,
   MessageId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
+  TurnItemId,
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -18,7 +21,10 @@ import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
-import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
+import {
+  type PendingApproval,
+  deriveTimelineEntriesFromVisibleTurnItems,
+} from "../../session-logic";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
@@ -992,4 +998,123 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const source = fixture.visibleTurnItems[4]!;
+  if (source.item.type !== "dynamic_tool") throw new Error("Expected fixture tool");
+  const sourceItem = source.item;
+  const commandRequest = RuntimeRequestId.make("command-approval");
+  const appRequest = RuntimeRequestId.make("app-approval");
+  const approvals: PendingApproval[] = [
+    {
+      requestId: commandRequest,
+      requestKind: "command",
+      createdAt: fixture.time(6),
+      detail: "printf '" + "long-command ".repeat(80) + "'",
+      reason: "Needs permission to run the command",
+      fullAccessOverride: "ask_rule",
+      responseCapability: "live",
+    },
+    {
+      requestId: appRequest,
+      requestKind: "permission",
+      createdAt: fixture.time(6),
+      detail: "Open the current tab",
+      appName: "Safari",
+      options: [
+        { decision: "decline", label: "Deny" },
+        { decision: "accept", label: "Allow once" },
+        {
+          decision: "acceptAlways",
+          label: "Always allow Safari",
+          warning: "Applies to future requests",
+        },
+      ],
+      responseCapability: "live",
+    },
+  ];
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      source,
+      ...approvals.map((approval, index) => ({
+        ...source,
+        position: source.position + index + 1,
+        sourceItemId: TurnItemId.make(`approval-${index}`),
+        item: {
+          ...sourceItem,
+          id: TurnItemId.make(`approval-${index}`),
+          type: "approval_request" as const,
+          status: "waiting" as const,
+          requestId: approval.requestId,
+          requestKind: approval.requestKind,
+          prompt: approval.detail,
+        },
+      })),
+    ],
+    optimisticMessages: [],
+  });
+  const props = baseProps();
+  const onRespondToApproval = vi.fn(async () => {});
+  const ui = (
+    pendingApprovals = approvals,
+    canOperateThread = true,
+    respondingRequestIds: RuntimeRequestId[] = [],
+  ) => (
+    <MessagesTimeline
+      {...props}
+      timelineEntries={entries}
+      pendingApprovals={pendingApprovals}
+      respondingRequestIds={respondingRequestIds}
+      canOperateThread={canOperateThread}
+      onRespondToApproval={onRespondToApproval}
+      isWorking
+      runningRunId={fixture.runId}
+    />
+  );
+  await using screen = await renderElement(ui());
+  await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
+  await expect
+    .element(screen.getByRole("group", { name: "App permission approval" }))
+    .toBeVisible();
+  await expect.element(screen.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Needs permission to run the command")).toBeVisible();
+  await expect.element(screen.getByText("Safari", { exact: true })).toBeVisible();
+  await click(screen.button("Why am I being asked this?"));
+  await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
+  await click(screen.button("Why am I being asked this?"));
+  await click(screen.buttons("More approval options")[1]!);
+  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
+  await click(screen.buttons("More approval options")[0]!);
+  await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Always allow this session" }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "acceptForSession");
+  await click(screen.button("Decline"));
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "decline");
+  await click(screen.button("Allow once"));
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "accept");
+  await screen.rerender(ui(approvals, false));
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  expect(
+    screen.buttons("More approval options").every((button) => button.hasAttribute("disabled")),
+  ).toBe(true);
+  await screen.rerender(ui(approvals, true, [commandRequest]));
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  await expect
+    .element(screen.getByRole("button", { name: "Allow once", exact: true }))
+    .toBeEnabled();
+  await screen.rerender(ui([{ ...approvals[0]!, responseCapability: "not_resumable" }]));
+  await expect
+    .element(screen.getByText("Provider process is gone. Interrupt or restart the run to respond."))
+    .toBeVisible();
+  expect(screen.buttons("Approve")).toHaveLength(0);
+  await screen.rerender(ui([]));
+  await expect
+    .element(screen.getByRole("group", { name: "Command approval" }))
+    .not.toBeInTheDocument();
+  expect(screen.text()).not.toContain("Waiting for approval");
 });
