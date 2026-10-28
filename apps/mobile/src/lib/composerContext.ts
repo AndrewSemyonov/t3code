@@ -11,9 +11,9 @@ import {
   OrchestrationMessageContext,
   type PullRequestContextMetadata,
   type ReviewCommentContextRecord,
-  type ScopedThreadRef,
   type ServerProviderSkill,
-  type ThreadContextRecord,
+  type EnvironmentContextRecord,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
@@ -23,7 +23,6 @@ import {
   isImageReferencesOnly,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
-  toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
@@ -101,17 +100,17 @@ export function createComposerContextHistory() {
   };
 }
 
-/** Same identity as web: one record per thread, so re-attaching reuses the chip. */
-export function threadComposerContext(ref: ScopedThreadRef, title: string): ThreadContextRecord {
-  const label = sanitizeComposerContextLabel(title, "thread");
+/** Same identity as web: one record per machine, so mentioning it again reuses the chip. */
+export function environmentComposerContext(
+  environmentId: EnvironmentId,
+  label: string,
+): EnvironmentContextRecord {
   return {
     version: 1,
-    kind: "thread",
-    contextId: toKindScopedComposerContextId("thread", ref.threadId),
-    label,
-    environmentId: ref.environmentId,
-    threadId: ref.threadId,
-    title: label,
+    kind: "environment",
+    contextId: ComposerContextId.make(`environment_${environmentId}`),
+    label: sanitizeComposerContextLabel(label, "environment"),
+    environmentId,
   };
 }
 
