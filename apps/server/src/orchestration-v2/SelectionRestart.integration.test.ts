@@ -457,7 +457,7 @@ it.live("moves a thread off its provider's shared session once sessions are per 
         failedReplacementOpen: true,
       });
       let capabilities = pooledCapabilities;
-      const resumedNativeIds: Array<string | undefined> = [];
+      const resumedNativeIds: Array<string | null | undefined> = [];
       const adapter = makeRestartAdapter(state);
       const layerRegistry = ProviderAdapterRegistry.layerSingle({
         ...adapter,
