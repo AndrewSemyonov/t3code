@@ -128,9 +128,9 @@ export const preparePairingRegistration = Effect.fn(
       wsBaseUrl: target.wsBaseUrl,
     }),
   };
-  const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
-  if (input.expectedEnvironmentId === undefined && Option.isSome(registry)) {
-    yield* registry.value.assertKnownAddress({ ...route, profile: Option.some(route.profile) });
+  if (input.expectedEnvironmentId === undefined) {
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+    yield* registry.assertKnownAddress({ ...route, profile: Option.some(route.profile) });
   }
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
   // An outdated server is still saved so it can be updated from this client.
@@ -156,11 +156,7 @@ const registerPairingConnection = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  // Rechecked under the environment's lock in case it was saved while the code was redeemed.
-  const registered = yield* registry.register(registration, {
-    knownAddressOnly: input.expectedEnvironmentId === undefined,
-  });
-  if (!registered) return registration.target.environmentId;
+  if (!(yield* registry.register(registration))) return registration.target.environmentId;
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)

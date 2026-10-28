@@ -237,7 +237,7 @@ describe("connection onboarding", () => {
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))));
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -458,10 +458,7 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            layerClientPresentation,
-            layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1 }),
-          ),
+          layerPairingOnboarding({ protocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1 }, calls),
         ),
         Effect.flip,
       );
@@ -476,21 +473,19 @@ describe("connection onboarding", () => {
     { label: "default", scopes: AuthStandardClientScopes },
   ] as const)("preserves the $label grant when pairing a remote environment", ({ scopes }) =>
     Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const httpLayer = layerPairingHttp(calls, { grantScopes: scopes });
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(layerClientPresentation, httpLayer)));
+      });
 
       const session = yield* fetchRemoteSessionState({
         httpBaseUrl: registration.profile.httpBaseUrl,
         bearerToken: registration.credential.token,
-      }).pipe(Effect.provide(httpLayer));
+      });
 
       expect(session.authenticated).toBe(true);
       expect(session.scopes).toEqual(scopes);
-    }),
+    }).pipe(Effect.provide(layerPairingOnboarding({ grantScopes: scopes }))),
   );
 
   it.effect("refuses to add a route that reaches a different machine, keeping the code", () =>
@@ -500,10 +495,7 @@ describe("connection onboarding", () => {
         host: "remote.example.test",
         pairingCode: "pairing-token",
         expectedEnvironmentId: EnvironmentId.make("some-other-machine"),
-      }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
-        Effect.flip,
-      );
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)), Effect.flip);
       expect(error).toMatchObject({ reason: "configuration" });
       expect(error.message).toContain("different machine");
       expect(calls.map((call) => call.url)).toEqual([
@@ -520,10 +512,7 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            layerClientPresentation,
-            layerPairingHttp(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
-          ),
+          layerPairingOnboarding({ protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }, calls),
         ),
         Effect.flip,
       );
@@ -542,15 +531,7 @@ describe("connection onboarding", () => {
       yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layerClientPresentation,
-            layerPairingHttp(calls, { failDescriptor: true }),
-          ),
-        ),
-        Effect.flip,
-      );
+      }).pipe(Effect.provide(layerPairingOnboarding({ failDescriptor: true }, calls)), Effect.flip);
 
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",

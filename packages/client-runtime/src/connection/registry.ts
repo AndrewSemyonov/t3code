@@ -106,8 +106,7 @@ export class EnvironmentRegistry extends Context.Service<
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: { readonly knownAddressOnly?: boolean },
-    ) => Effect.Effect<boolean, ConnectionBlockedError | Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
     /**
      * Fails when the route would add a new address to a saved user environment. Pairing that does
      * not target an environment checks this, because the server reports its own environment id.
@@ -561,21 +560,19 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
-        if (options?.knownAddressOnly === true) yield* assertKnownAddress(route);
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return false;
         }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
+          const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
           const routes = existing.filter(

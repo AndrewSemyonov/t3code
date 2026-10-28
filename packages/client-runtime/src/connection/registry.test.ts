@@ -1928,26 +1928,6 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
-  it.effect("a known-address-only registration cannot add a route to a saved environment", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([RELAY_TARGET]);
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        const before = yield* SubscriptionRef.get(registry.entries);
-
-        const error = yield* registry
-          .register(lanRegistration(), { knownAddressOnly: true })
-          .pipe(Effect.flip);
-
-        expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
-        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
-          RELAY_TARGET,
-        ]);
-        expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
-  );
-
   it.effect(
     "adding a saved SSH host again replaces its route, whatever id it was saved under",
     () =>
