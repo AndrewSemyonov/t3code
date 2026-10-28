@@ -32,7 +32,7 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
-import { connectionRoutes, hasRouteToHttpBaseUrl, routeEntry, sshTargetKey } from "./routes.ts";
+import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
 
 export interface PairingConnectionInput {
   readonly pairingUrl?: string;
@@ -113,33 +113,8 @@ export const preparePairingRegistration = Effect.fn(
   ) {
     return yield* differentMachineError(descriptor.label);
   }
-  const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
-  if (
-    input.expectedEnvironmentId === undefined &&
-    Option.isSome(registry) &&
-    !(yield* registry.value.isPlatformEnvironment(descriptor.environmentId))
-  ) {
-    // Mirrors the guard in `register`, which stays authoritative; platform entries ignore pairing.
-    const saved = (yield* SubscriptionRef.get(registry.value.entries)).get(
-      descriptor.environmentId,
-    );
-    if (saved !== undefined && !hasRouteToHttpBaseUrl(saved, target.httpBaseUrl)) {
-      return yield* EnvironmentRegistry.savedEnvironmentAddressError(saved.target.label);
-    }
-  }
-  const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
-  // An outdated server is still saved so it can be updated from this client.
-  if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
-    return yield* compatibilityError;
-  }
-  const access = yield* bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
-    credential: target.credential,
-    clientMetadata: presentation.metadata,
-  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = bearerConnectionId(descriptor.environmentId, target.httpBaseUrl);
-
-  return new BearerConnectionRegistration({
+  const route = {
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
       label: descriptor.label,
@@ -152,6 +127,24 @@ export const preparePairingRegistration = Effect.fn(
       httpBaseUrl: target.httpBaseUrl,
       wsBaseUrl: target.wsBaseUrl,
     }),
+  };
+  const registry = yield* Effect.serviceOption(EnvironmentRegistry.EnvironmentRegistry);
+  if (input.expectedEnvironmentId === undefined && Option.isSome(registry)) {
+    yield* registry.value.assertKnownAddress({ ...route, profile: Option.some(route.profile) });
+  }
+  const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+  // An outdated server is still saved so it can be updated from this client.
+  if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
+    return yield* compatibilityError;
+  }
+  const access = yield* bootstrapRemoteBearerSession({
+    httpBaseUrl: target.httpBaseUrl,
+    credential: target.credential,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+
+  return new BearerConnectionRegistration({
+    ...route,
     credential: new BearerConnectionCredential({
       token: access.access_token,
     }),
@@ -163,8 +156,9 @@ const registerPairingConnection = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  // Rechecked under the environment's lock in case it was saved while the code was redeemed.
   const registered = yield* registry.register(registration, {
-    refuseNewRoute: input.expectedEnvironmentId === undefined,
+    knownAddressOnly: input.expectedEnvironmentId === undefined,
   });
   if (!registered) return registration.target.environmentId;
   yield* registry.setCompatibility(registration.target.environmentId, null);

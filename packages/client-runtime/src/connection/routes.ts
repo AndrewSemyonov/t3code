@@ -143,18 +143,11 @@ export function findRouteToSameAddress(
   return key === null ? undefined : routes.find((existing) => routeAddressKey(existing) === key);
 }
 
-export function hasRouteToHttpBaseUrl(entry: ConnectionCatalogEntry, httpBaseUrl: string): boolean {
-  const key = bearerAddressKey(httpBaseUrl);
-  return connectionRoutes(entry).some((route) => routeAddressKey(route) === key);
-}
-
-const bearerAddressKey = (httpBaseUrl: string) => `bearer:${httpBaseUrl.replace(/\/+$/, "")}`;
-
 function routeAddressKey(route: ConnectionRoute): string | null {
   const profile = Option.getOrNull(route.profile);
   switch (profile?._tag) {
     case "BearerConnectionProfile":
-      return bearerAddressKey(profile.httpBaseUrl);
+      return `bearer:${profile.httpBaseUrl.replace(/\/+$/, "")}`;
     case "SshConnectionProfile":
       return `ssh:${sshTargetKey(profile.target)}`;
     default:

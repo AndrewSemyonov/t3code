@@ -92,13 +92,6 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedError<Platform
   }
 }
 
-export function savedEnvironmentAddressError(label: string) {
-  return new ConnectionBlockedError({
-    reason: "configuration",
-    detail: `That address claims to be ${label}, which is already saved. Add it as a route from that environment's settings instead.`,
-  });
-}
-
 export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
@@ -113,16 +106,15 @@ export class EnvironmentRegistry extends Context.Service<
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: {
-        /**
-         * Refuse to add a new address to an environment that is already saved. Pairing sets this
-         * unless the user targeted that environment, because the environment id is self-reported.
-         */
-        readonly refuseNewRoute?: boolean;
-      },
+      options?: { readonly knownAddressOnly?: boolean },
     ) => Effect.Effect<boolean, ConnectionBlockedError | Persistence.ConnectionPersistenceError>;
-    /** The host owns platform-managed entries, so `register` leaves them untouched. */
-    readonly isPlatformEnvironment: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    /**
+     * Fails when the route would add a new address to a saved user environment. Pairing that does
+     * not target an environment checks this, because the server reports its own environment id.
+     */
+    readonly assertKnownAddress: (
+      route: ConnectionRoute,
+    ) => Effect.Effect<void, ConnectionBlockedError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -550,27 +542,42 @@ export const make = Effect.gen(function* () {
     return { entry: rest, addressesChanged: true };
   };
 
+  const assertKnownAddress = Effect.fn("EnvironmentRegistry.assertKnownAddress")(function* (
+    route: ConnectionRoute,
+  ) {
+    const environmentId = route.target.environmentId;
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    if (
+      saved !== undefined &&
+      findRouteToSameAddress(connectionRoutes(saved), route) === undefined
+    ) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+      });
+    }
+  });
+
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly refuseNewRoute?: boolean },
+    options?: { readonly knownAddressOnly?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
+    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
+        if (options?.knownAddressOnly === true) yield* assertKnownAddress(route);
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return false;
         }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
-          const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
-          if (options?.refuseNewRoute === true && sameAddress === undefined) {
-            return yield* savedEnvironmentAddressError(previous.target.label);
-          }
           const routes = existing.filter(
             (existing) =>
               existing !== sameAddress ||
@@ -1160,11 +1167,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
-    isPlatformEnvironment: Effect.fn("EnvironmentRegistry.isPlatformEnvironment")(function* (
-      environmentId: EnvironmentId,
-    ) {
-      return (yield* Ref.get(platformEnvironmentIds)).has(environmentId);
-    }),
+    assertKnownAddress,
     registerPlatform,
     reconcilePlatform,
     remove,
