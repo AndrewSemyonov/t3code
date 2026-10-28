@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -291,8 +292,15 @@ export const make = Effect.gen(function* () {
       ...response,
       access_token: response.access_token,
     });
+    // GitHub has retired the old pair, so an unsaved new one is still the only usable token.
     const saved = yield* replaceSession(host, session, next).pipe(
-      Effect.mapError((cause) => new GitHubAppSessionError({ host, cause })),
+      Effect.retry({ times: 2, schedule: Schedule.spaced(Duration.millis(250)) }),
+      Effect.catch((cause) =>
+        Effect.logError("Could not save the refreshed app sign-in; using it unsaved.", {
+          host,
+          cause,
+        }).pipe(Effect.as(true)),
+      ),
     );
     if (saved) return Option.some(next.accessToken);
     // Signed out or signed in again meanwhile: serve whatever is stored now.

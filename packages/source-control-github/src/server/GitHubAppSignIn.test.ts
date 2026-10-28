@@ -10,7 +10,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ServerSettingsError } from "@t3tools/contracts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -42,6 +42,8 @@ function harness(options: {
   readonly tokens?: Record<string, string>;
   /** Without one, the server has no `gh` login to fall back to. */
   readonly ghSignedIn?: boolean;
+  /** Makes every settings write fail, as a full disk would. */
+  readonly settingsWritesFail?: boolean;
   /** Holds a request open until it completes, to interleave other work with it. */
   readonly gate?: (path: string) => Effect.Effect<void>;
 }) {
@@ -73,17 +75,29 @@ function harness(options: {
       stdoutTruncated: false,
       stderrTruncated: false,
     });
+  const host = TestSourceControlHost.layer({
+    settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sourceControlHosts: {
+        github: { signIns: options.signIns ?? {}, tokens: options.tokens ?? {} },
+      },
+    }),
+    process: { run },
+  });
+  const failingWrites = Layer.effect(
+    SourceControlHost.SourceControlHost,
+    Effect.map(Effect.service(SourceControlHost.SourceControlHost), (service) => ({
+      ...service,
+      settings: {
+        ...service.settings,
+        update: () =>
+          Effect.fail(
+            new ServerSettingsError({ settingsPath: "settings.json", operation: "write-file" }),
+          ),
+      },
+    })),
+  ).pipe(Layer.provideMerge(host));
   const layer = GitHubCredentials.layer.pipe(
-    Layer.provideMerge(
-      TestSourceControlHost.layer({
-        settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-          sourceControlHosts: {
-            github: { signIns: options.signIns ?? {}, tokens: options.tokens ?? {} },
-          },
-        }),
-        process: { run },
-      }),
-    ),
+    Layer.provideMerge(options.settingsWritesFail === true ? failingWrites : host),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
@@ -399,6 +413,20 @@ describe("GitHubAppSignIn", () => {
       const credential = yield* (yield* GitHubCredentials.GitHubCredentials).get("github.com");
       expect(credential.source).toBe("app");
       expect(Redacted.value(credential.token)).toBe("ghu_current");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("serves a refreshed token GitHub issued even when saving it fails", () => {
+    const { layer } = harness({
+      signIns: { "github.com": session({ accessTokenExpiresAt: 3 * 60_000 }) },
+      settingsWritesFail: true,
+      handle: () => ({ body: { access_token: "ghu_refreshed", expires_in: 28_800 } }),
+    });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const pending = yield* Effect.forkChild(credentials.get("github.com"));
+      yield* TestClock.adjust("1 second");
+      expect(Redacted.value((yield* Fiber.join(pending)).token)).toBe("ghu_refreshed");
     }).pipe(Effect.provide(layer));
   });
 
