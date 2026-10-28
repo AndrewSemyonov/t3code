@@ -86,6 +86,7 @@ const InstallationRepositories = Schema.Struct({
 // Installing the app on another account should show up soon after the user comes back.
 const COVERAGE_TTL = Duration.minutes(2);
 const MAX_PAGES = 10;
+const COVERAGE_FAILURE_TTL = Duration.seconds(30);
 
 /** Where the signed-in app reaches: accounts that installed it for all repositories, or listed ones. */
 interface AppCoverage {
@@ -266,14 +267,17 @@ export const make = Effect.gen(function* () {
       },
       TokenResponse,
     ).pipe(Effect.mapError((cause) => new GitHubAppSessionError({ host, cause })));
-    if (response.access_token === undefined) {
-      // A refused refresh token is final: the user revoked the app or the session lapsed.
-      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", {
-        host,
-        error: response.error,
-      });
+    if (response.error === "bad_refresh_token") {
+      // Final: the user revoked the app or the session lapsed.
+      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", { host });
       yield* replaceSession(host, session, null).pipe(Effect.ignore);
       return Option.none<string>();
+    }
+    if (response.access_token === undefined) {
+      return yield* new GitHubAppSessionError({
+        host,
+        cause: new Error(`GitHub did not refresh the sign-in (${response.error ?? "no token"}).`),
+      });
     }
     const next = sessionFrom(session.account, now, {
       ...response,
@@ -309,13 +313,24 @@ export const make = Effect.gen(function* () {
           const current = yield* readSession(host);
           if (Option.isNone(current)) return Option.none<string>();
           const refusedTokens = yield* Ref.get(refused);
-          if (
-            isFresh(current.value, yield* Clock.currentTimeMillis) &&
-            !refusedTokens.has(current.value.accessToken)
-          ) {
+          const now = yield* Clock.currentTimeMillis;
+          if (isFresh(current.value, now) && !refusedTokens.has(current.value.accessToken)) {
             return Option.some(current.value.accessToken);
           }
-          return yield* refresh(host, current.value);
+          const usable = Option.some(current.value.accessToken).pipe(
+            Option.filter(
+              (accessToken) =>
+                !refusedTokens.has(accessToken) &&
+                (current.value.accessTokenExpiresAt === null ||
+                  now < current.value.accessTokenExpiresAt),
+            ),
+          );
+          // A refresh ahead of expiry that fails leaves the still-valid token in use.
+          return yield* refresh(host, current.value).pipe(
+            Effect.catchTag("GitHubAppSessionError", (error) =>
+              Option.isSome(usable) ? Effect.succeed(usable) : Effect.fail(error),
+            ),
+          );
         }),
       );
     },
@@ -536,7 +551,8 @@ export const make = Effect.gen(function* () {
 
   const coverage = yield* Cache.makeWith(coverageOf, {
     capacity: 8,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? COVERAGE_TTL : Duration.zero),
+    // A failed read answers `covered`; keep that briefly so an outage is not re-asked per request.
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? COVERAGE_TTL : COVERAGE_FAILURE_TTL),
   });
 
   const access: GitHubAppSignIn["Service"]["access"] = Effect.fn("GitHubAppSignIn.access")(

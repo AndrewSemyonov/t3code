@@ -61,7 +61,8 @@ function AppMark(props: { readonly signedIn: boolean }) {
 /** The device code, one cell per character, as GitHub prints it. */
 function DeviceCode(props: { readonly code: string }) {
   return (
-    <div className="flex items-center gap-1 font-mono text-lg font-medium" aria-label={props.code}>
+    <div className="flex items-center gap-1 font-mono text-lg font-medium">
+      <span className="sr-only">{props.code}</span>
       {Array.from(props.code, (char, index) =>
         char === "-" ? (
           <span key={index} aria-hidden className="px-0.5 text-muted-foreground">

@@ -370,6 +370,45 @@ describe("GitHubAppSignIn", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("serves the still-valid token when a refresh ahead of expiry fails", () => {
+    const { layer } = harness({
+      signIns: { "github.com": session({ accessTokenExpiresAt: 3 * 60_000 }) },
+      handle: () => ({ status: 502, body: {} }),
+    });
+    return Effect.gen(function* () {
+      const credential = yield* (yield* GitHubCredentials.GitHubCredentials).get("github.com");
+      expect(credential.source).toBe("app");
+      expect(Redacted.value(credential.token)).toBe("ghu_current");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the session when GitHub answers a refresh with another error", () => {
+    const { layer } = harness({
+      signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
+      handle: () => ({ body: { error: "unauthorized_client" } }),
+    });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
+        "GitHubAppSessionError",
+      );
+      expect(Object.keys(yield* savedSignIns)).toEqual(["github.com"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("asks GitHub for the installations once while it keeps failing", () => {
+    const { layer, requests } = harness({
+      signIns: { "github.com": session() },
+      handle: () => ({ status: 502, body: {} }),
+    });
+    return Effect.gen(function* () {
+      const signIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+      expect(yield* signIn.access("github.com", "acme/one")).toBe("covered");
+      expect(yield* signIn.access("github.com", "acme/two")).toBe("covered");
+      expect(requests).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("keeps the app session when GitHub refuses a different credential", () => {
     const { layer, requests } = harness({
       signIns: { "github.com": session() },
