@@ -14,7 +14,7 @@ const makeFakeDb = (input: {
   readonly existingAllocation?: boolean;
 }) =>
   ({
-    select: () => ({
+    select: (fields: Record<string, unknown>) => ({
       from: (table: unknown) =>
         table === relayManagedTunnelLimits
           ? {
@@ -27,11 +27,15 @@ const makeFakeDb = (input: {
             }
           : {
               innerJoin: () => ({
-                where: () => Effect.succeed([{ activeTunnels: input.activeTunnels }]),
-              }),
-              where: () => ({
-                limit: () =>
-                  Effect.succeed(input.existingAllocation ? [{ environmentId: "env-new" }] : []),
+                where: () =>
+                  "activeTunnels" in fields
+                    ? Effect.succeed([{ activeTunnels: input.activeTunnels }])
+                    : {
+                        limit: () =>
+                          Effect.succeed(
+                            input.existingAllocation ? [{ environmentId: "env-new" }] : [],
+                          ),
+                      },
               }),
             },
     }),

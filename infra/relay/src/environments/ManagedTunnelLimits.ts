@@ -118,15 +118,24 @@ const make = Effect.gen(function* () {
       const activeTunnels = counted[0]?.activeTunnels ?? 0;
       if (activeTunnels < baseMaxTunnels) return;
 
-      // Allocations survive tunnel release, so a restart of an admitted environment
-      // passes without asking T3 Chat. A downgrade only blocks new environments.
+      // An environment that already holds a slot (allocation plus an active tunnel
+      // link) restarts without asking T3 Chat, so a downgrade only blocks new ones.
       const existing = yield* db
         .select({ environmentId: relayManagedEndpointAllocations.environmentId })
         .from(relayManagedEndpointAllocations)
+        .innerJoin(
+          relayEnvironmentLinks,
+          and(
+            eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
+            eq(relayEnvironmentLinks.environmentId, relayManagedEndpointAllocations.environmentId),
+          ),
+        )
         .where(
           and(
             eq(relayManagedEndpointAllocations.userId, input.userId),
             eq(relayManagedEndpointAllocations.environmentId, input.environmentId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            eq(relayEnvironmentLinks.managedTunnelsEnabled, true),
           ),
         )
         .limit(1)
