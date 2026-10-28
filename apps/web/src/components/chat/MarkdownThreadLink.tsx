@@ -2,8 +2,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   formatThreadLink,
+  guessThreadLinkRef,
   percentDecodedThreadLinkId,
-  resolveThreadLinkRef,
   type ThreadLink,
   unknownThreadLinkLabel,
 } from "@t3tools/shared/threadLinks";
@@ -27,9 +27,7 @@ export function MarkdownThreadLink(props: {
   const local = written ?? decoded;
   const guess = local === null && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
-  const remote = useThreadShell(
-    guess ? resolveThreadLinkRef(props.link, props.environmentId, refs) : null,
-  );
+  const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
   const thread = local ?? remote;
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);

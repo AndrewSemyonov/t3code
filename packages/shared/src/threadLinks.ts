@@ -42,23 +42,25 @@ export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null 
   }
 }
 
-/** A v2 link opens only its own environment's thread; a v1 link may open a unique match elsewhere. */
-export function resolveThreadLinkRef(
+/** The threads a link can name, in its own environment or else the message's: as written, then decoded. */
+export function threadLinkCandidates(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
-  refs: ReadonlyArray<ScopedThreadRef>,
-): ScopedThreadRef | null {
+): ReadonlyArray<ScopedThreadRef> {
   const environmentId = link.environmentId ?? messageEnvironmentId;
   const decodedId = percentDecodedThreadLinkId(link.threadId);
-  const ids = decodedId === null ? [link.threadId] : [link.threadId, decodedId];
-  for (const threadId of ids) {
-    const local = refs.find(
-      (ref) => ref.environmentId === environmentId && ref.threadId === threadId,
-    );
-    if (local) return local;
-  }
+  const written = { environmentId, threadId: link.threadId };
+  return decodedId === null ? [written] : [written, { environmentId, threadId: decodedId }];
+}
+
+/** A v1 link its message's environment lacks opens a unique match elsewhere; a v2 link never does. */
+export function guessThreadLinkRef(
+  link: ThreadLink,
+  refs: ReadonlyArray<ScopedThreadRef>,
+): ScopedThreadRef | null {
   if (link.environmentId !== null) return null;
-  for (const threadId of ids) {
+  const decodedId = percentDecodedThreadLinkId(link.threadId);
+  for (const threadId of decodedId === null ? [link.threadId] : [link.threadId, decodedId]) {
     let match: ScopedThreadRef | null = null;
     for (const ref of refs) {
       if (ref.threadId !== threadId) continue;
@@ -89,17 +91,21 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`${THREAD_LINK_PROTOCOL}://v`);
 }
 
-export function threadLinkEnvironmentIds(
+/** Every thread the markdown's links can name, so their titles are keyed reads. */
+export function threadLinkRefs(
   markdown: string,
   messageEnvironmentId: EnvironmentId,
-): ReadonlyArray<EnvironmentId> {
-  const environmentIds = new Set([messageEnvironmentId]);
+): ReadonlyArray<ScopedThreadRef> {
+  const refs = new Map<string, ScopedThreadRef>();
   for (const match of markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)) {
     const href = match.groups?.href ?? match.groups?.autolink;
-    const environmentId = href === undefined ? null : parseThreadLinkHref(href)?.environmentId;
-    if (environmentId) environmentIds.add(environmentId);
+    const link = href === undefined ? null : parseThreadLinkHref(href);
+    if (link === null) continue;
+    for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
+      refs.set(`${ref.environmentId}/${ref.threadId}`, ref);
+    }
   }
-  return [...environmentIds].sort();
+  return [...refs.values()];
 }
 
 export function unknownThreadLinkLabel(

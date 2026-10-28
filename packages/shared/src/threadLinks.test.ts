@@ -3,10 +3,11 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 
 import {
   formatThreadLink,
+  guessThreadLinkRef,
   parseThreadLinkHref,
   relabelThreadLinks,
-  resolveThreadLinkRef,
-  threadLinkEnvironmentIds,
+  threadLinkCandidates,
+  threadLinkRefs,
 } from "./threadLinks.ts";
 
 const ref = (environmentId: string, threadId = "chat-1") => ({
@@ -21,34 +22,26 @@ const titlesIn =
     titles[environmentId]?.[threadId];
 
 describe("thread link destinations", () => {
-  it("prefers the local literal id, then the local decoded id, over remote matches", () => {
-    const source = ref("local", "provider%3A1");
-    const decoded = ref("local", "provider:1");
-    const remote = ref("remote", "provider%3A1");
-    const link = v1("provider%3A1");
-    expect(resolveThreadLinkRef(link, local, [remote, decoded, source])).toEqual(source);
-    expect(resolveThreadLinkRef(link, local, [remote, decoded])).toEqual(decoded);
+  it("names a v1 link's thread in the message's environment, as written and then decoded", () => {
+    expect(threadLinkCandidates(v1("provider%3A1"), local)).toEqual([
+      ref("local", "provider%3A1"),
+      ref("local", "provider:1"),
+    ]);
   });
 
   it("opens the unique matching chat in another environment for a v1 link", () => {
     const destination = ref("remote");
-    expect(
-      resolveThreadLinkRef(v1("chat-1"), local, [ref("local", "other-chat"), destination]),
-    ).toEqual(destination);
+    expect(guessThreadLinkRef(v1("chat-1"), [ref("local", "other-chat"), destination])).toEqual(
+      destination,
+    );
   });
 
   it("opens a v2 link only in its own environment", () => {
-    const there = ref("there");
-    const link = { ...there, threadId: ThreadId.make("chat-1") };
-    expect(resolveThreadLinkRef(link, local, [ref("local"), ref("elsewhere"), there])).toEqual(
-      there,
+    const there = ref("there", "a%3A1");
+    expect(threadLinkCandidates(there, local)).toEqual([there, ref("there", "a:1")]);
+    expect(guessThreadLinkRef(there, [ref("elsewhere", "a%3A1"), ref("elsewhere", "a:1")])).toBe(
+      null,
     );
-    expect(resolveThreadLinkRef(link, local, [ref("local"), ref("elsewhere")])).toBeNull();
-    expect(
-      resolveThreadLinkRef({ ...there, threadId: ThreadId.make("a%3A1") }, local, [
-        ref("there", "a:1"),
-      ]),
-    ).toEqual(ref("there", "a:1"));
   });
 
   it("leaves ambiguous or missing destinations unresolved", () => {
@@ -56,12 +49,10 @@ describe("thread link destinations", () => {
     const literal = ref("remote", "provider%3A1");
     const decoded = ref("remote", "provider:1");
     expect(
-      resolveThreadLinkRef(link, local, [literal, ref("other-remote", literal.threadId), decoded]),
+      guessThreadLinkRef(link, [literal, ref("other-remote", literal.threadId), decoded]),
     ).toBeNull();
-    expect(
-      resolveThreadLinkRef(link, local, [decoded, ref("other-remote", decoded.threadId)]),
-    ).toBeNull();
-    expect(resolveThreadLinkRef(link, local, [ref("remote", "other-chat")])).toBeNull();
+    expect(guessThreadLinkRef(link, [decoded, ref("other-remote", decoded.threadId)])).toBeNull();
+    expect(guessThreadLinkRef(link, [ref("remote", "other-chat")])).toBeNull();
   });
 });
 
@@ -143,13 +134,13 @@ describe("thread links", () => {
     );
   });
 
-  it("lists the environments a message's links need titles from", () => {
+  it("lists the threads a message's links can name, outside code", () => {
     expect(
-      threadLinkEnvironmentIds(
-        "<t3-thread://v2/there/t1> [a](t3-thread://v1/t2) `<t3-thread://v2/code/t3>`",
+      threadLinkRefs(
+        "<t3-thread://v2/there/t1> [a](t3-thread://v1/t%3A2) `<t3-thread://v2/code/t3>`",
         local,
       ),
-    ).toEqual(["local", "there"]);
+    ).toEqual([ref("there", "t1"), ref("local", "t%3A2"), ref("local", "t:2")]);
   });
 
   it("writes a titleless autolink that opens that exact thread", () => {

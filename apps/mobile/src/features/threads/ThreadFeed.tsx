@@ -56,7 +56,7 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -239,6 +239,7 @@ import {
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
+  resolveThreadLink,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
@@ -2257,8 +2258,11 @@ export const ThreadFeed = memo(function ThreadFeed({
   const resolveLinkedThread = (href: string) => {
     const link = parseThreadLinkHref(href);
     if (!link) return null;
-    const refs = appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
-    const resolved = resolveThreadLinkRef(link, props.environmentId, refs);
+    const resolved = resolveThreadLink(
+      (atom) => appAtomRegistry.get(atom),
+      link,
+      props.environmentId,
+    );
     if (resolved !== null || link.environmentId !== null) return resolved;
     // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
