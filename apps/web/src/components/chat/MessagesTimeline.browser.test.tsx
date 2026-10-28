@@ -1078,12 +1078,15 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .toBeVisible();
   await expect.element(screen.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Needs permission to run the command")).toBeVisible();
-  expect(
-    getComputedStyle(screen.getByLabelText("Command", { exact: true }).element()).userSelect,
-  ).toBe("text");
-  expect(
-    getComputedStyle(screen.getByText("Needs permission to run the command").element()).userSelect,
-  ).toBe("text");
+  await vi.waitFor(() => {
+    expect(
+      getComputedStyle(screen.getByLabelText("Command", { exact: true }).element()).userSelect,
+    ).toBe("text");
+    expect(
+      getComputedStyle(screen.getByText("Needs permission to run the command").element())
+        .userSelect,
+    ).toBe("text");
+  });
   await expect.element(screen.getByText("Safari", { exact: true })).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
@@ -1107,13 +1110,13 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     await expect
       .element(screen.getByRole("group", { name: "Command approval" }))
       .not.toBeInTheDocument();
-    expect(screen.buttons("Approve")).toHaveLength(0);
+    await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
     await expect
       .element(screen.getByRole("button", { name: "Allow once", exact: true }))
       .toBeVisible();
     await screen.rerender(ui({ timelineEntries }));
     await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
-    expect(screen.buttons("Approve")).toHaveLength(1);
+    await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(1));
   }
   await screen.rerender(ui({ timelineEntries: [], isWorking: false }));
   await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
@@ -1133,9 +1136,11 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .toHaveTextContent("Command approval");
   await screen.rerender(ui({ canOperateThread: false }));
   await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
-  expect(
-    screen.buttons("More approval options").every((button) => button.hasAttribute("disabled")),
-  ).toBe(true);
+  await vi.waitFor(() =>
+    expect(
+      screen.buttons("More approval options").every((button) => button.hasAttribute("disabled")),
+    ).toBe(true),
+  );
   await screen.rerender(ui({ respondingRequestIds: [commandRequest] }));
   await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
   await expect
@@ -1147,14 +1152,14 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByText("Provider process is gone. Interrupt or restart the run to respond."))
     .toBeVisible();
-  expect(screen.buttons("Approve")).toHaveLength(0);
+  await vi.waitFor(() => expect(screen.buttons("Approve")).toHaveLength(0));
   await screen.rerender(
     ui({ pendingApprovals: [], timelineEntries: entries(true), isWorking: false }),
   );
   await expect
     .element(screen.getByRole("group", { name: "Command approval" }))
     .not.toBeInTheDocument();
-  expect(screen.text()).not.toContain("Waiting for approval");
+  await vi.waitFor(() => expect(screen.text()).not.toContain("Waiting for approval"));
   await screen.getByRole("button", { expanded: false }).click();
   await expect
     .element(screen.getByRole("button", { name: approvals[0]!.detail!, exact: true }))
