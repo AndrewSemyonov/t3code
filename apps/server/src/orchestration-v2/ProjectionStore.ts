@@ -7908,9 +7908,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   const items = [
                     ...(workMode === "work" ? [] : missingInterruptRequests(visible, page.items)),
                     ...page.items,
-                  ]
-                    .sort((left, right) => left.position - right.position)
-                    .map((row, position) => ({ ...row, position }));
+                  ].map((row, position) => ({ ...row, position }));
                   return {
                     ...page,
                     snapshotSequence,

@@ -187,13 +187,13 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
-it.effect("memory windows keep deferred candidates after compaction", () =>
+it.effect("memory windows keep compacted work and interrupt history in order", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("deferred-window");
     const projection = yield* store.getThreadProjection(threadId);
     const run = projection.runs[0]!;
-    const item = projection.turnItems[0]!;
+    const item = projection.turnItems.find((item) => item.type === "command_execution")!;
     yield* store.apply({
       id: EventId.make("event:deferred-window:completed"),
       type: "run.updated",
@@ -201,27 +201,50 @@ it.effect("memory windows keep deferred candidates after compaction", () =>
       occurredAt: projection.updatedAt,
       payload: { ...run, status: "completed", completedAt: projection.updatedAt },
     });
-    for (let ordinal = 1; ordinal <= 80; ordinal += 1) {
+    for (let ordinal = 1; ordinal <= 163; ordinal += 1) {
+      const interrupt =
+        ordinal === 81 ? "run_interrupt_request" : ordinal === 162 ? "run_interrupt_result" : null;
+      const base = {
+        ...item,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        id: ordinal === 1 ? item.id : TurnItemId.make(`item:deferred-window:${ordinal}`),
+        ordinal,
+        status: "completed" as const,
+      };
       yield* store.apply({
         id: EventId.make(`event:deferred-window:${ordinal}`),
         type: "turn-item.updated",
         threadId,
         occurredAt: projection.updatedAt,
-        payload: {
-          ...item,
-          id: ordinal === 1 ? item.id : TurnItemId.make(`item:deferred-window:${ordinal}`),
-          ordinal,
-          status: "completed",
-        },
+        payload: interrupt === null ? base : { ...base, type: interrupt, message: interrupt },
       });
+      if (ordinal === 80) {
+        const snapshot = yield* store.getThreadSnapshotWindow(threadId, {
+          rowLimit: 77,
+          userTurnLimit: 10,
+          deferWork: true,
+        });
+        assert.lengthOf(snapshot.projection.visibleTurnItems, 1);
+        assert.strictEqual(
+          snapshot.projection.visibleTurnItems[0]?.item.deferredWork?.itemCount,
+          80,
+        );
+      }
     }
-    const snapshot = yield* store.getThreadSnapshotWindow(threadId, {
-      rowLimit: 77,
-      userTurnLimit: 10,
-      deferWork: true,
-    });
-    assert.lengthOf(snapshot.projection.visibleTurnItems, 1);
-    assert.strictEqual(snapshot.projection.visibleTurnItems[0]?.item.deferredWork?.itemCount, 80);
+    const page = yield* store.getThreadHistoryPage(
+      threadId,
+      encodeThreadHistoryCursor({
+        snapshotSequence: 0,
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("item:deferred-window:163"),
+        position: 162,
+      }),
+    );
+    assert.strictEqual(page.items[0]?.item.type, "run_interrupt_request");
+    assert.strictEqual(page.items.at(-1)?.item.type, "run_interrupt_result");
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
