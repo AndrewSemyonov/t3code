@@ -1260,7 +1260,7 @@ function RunFoldButton({
         .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
     );
   };
-  // oxlint-disable-next-line t3code/react-effect-budget -- Restored expanded folds also need their server history.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restored expanded folds load their deferred server history on mount.
   useEffect(() => {
     if (entry.expanded)
       void load().then((results) =>

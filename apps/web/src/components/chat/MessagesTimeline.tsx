@@ -1579,7 +1579,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
     );
   };
-  // oxlint-disable-next-line t3code/react-effect-budget -- Restored expanded folds also need their server history.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restored expanded folds load their deferred server history on mount.
   useEffect(() => {
     if (row.expanded)
       void load().then((results) =>
