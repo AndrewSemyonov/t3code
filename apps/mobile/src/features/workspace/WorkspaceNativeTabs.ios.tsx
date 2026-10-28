@@ -36,6 +36,7 @@ function RetainedWorkspaceTab(props: {
   const workspace = useWorkspaceTabs()!;
   // Whether this slot is the visible one, read by cleanups after the switch has committed.
   const activeRef = useRef(props.active);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed active flag to a ref that header cleanups read after the tab switch commits
   useLayoutEffect(() => {
     activeRef.current = props.active;
   }, [props.active]);
@@ -168,7 +169,11 @@ export function WorkspaceNativeTabs(props: {
             position: "absolute",
             left: 0,
             bottom: 0,
-            width: layout.listPaneWidth ?? width,
+            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
+            width:
+              deviceType === "pad"
+                ? Math.min(280, layout.listPaneWidth ?? width, width)
+                : (layout.listPaneWidth ?? width),
             height: 128,
           }}
         >
