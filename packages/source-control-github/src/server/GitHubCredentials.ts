@@ -45,7 +45,7 @@ export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingEr
   { host: Schema.String },
 ) {
   override get message(): string {
-    return `No GitHub credential for ${this.host}: sign in with GitHub in Settings → Source Control, set GH_TOKEN, or install the GitHub CLI and run \`gh auth login\`.`;
+    return `No GitHub credential for ${this.host}: set GH_TOKEN, or install the GitHub CLI and run \`gh auth login\`.`;
   }
 }
 

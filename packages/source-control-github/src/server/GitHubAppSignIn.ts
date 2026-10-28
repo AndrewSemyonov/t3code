@@ -21,11 +21,15 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as GitHubClient from "../shared/definition.ts";
 
-/** The public client ID of the T3 Code for GitHub app; the device flow needs no secret. */
-export const GITHUB_APP_CLIENT_ID = "Iv23liqyA11dE4B8Y7Jl";
+/**
+ * The public client ID of the T3 Code for GitHub app, which the device flow needs (no secret).
+ * Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
+ */
+export const CLIENT_ID_VARIABLE = "T3CODE_GITHUB_APP_CLIENT_ID";
 
 const KIND = SourceControlProviderKind.make("github");
 const REQUEST_TIMEOUT = Duration.seconds(15);
@@ -110,6 +114,8 @@ export class GitHubAppSignIn extends Context.Service<
   GitHubAppSignIn,
   {
     /** The signed-in access token for `host`, refreshed when due; none when not signed in. */
+    /** Whether the server is configured with the app's client ID. */
+    readonly enabled: boolean;
     readonly token: (host: string) => Effect.Effect<Option.Option<string>, GitHubAppSessionError>;
     /** Refreshes on the next `token` when `rejected` is the token GitHub just refused. */
     readonly invalidate: (host: string, rejected: string) => Effect.Effect<void>;
@@ -140,13 +146,15 @@ const signInError = (host: string, reason: SourceControlSignInFailure, detail: s
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
+  const clientId = (yield* HostProcess.Environment)[CLIENT_ID_VARIABLE]?.trim() ?? "";
+  const enabled = clientId !== "";
   const scope = yield* Effect.scope;
   const refreshLock = yield* Semaphore.make(1);
   const refused = yield* Ref.make<ReadonlySet<string>>(new Set());
   const pending = yield* Ref.make<ReadonlyMap<string, PendingSignIn>>(new Map());
 
   const isAppHost = (host: string) =>
-    GitHubClient.APP_SIGN_IN.hosts.includes(host.trim().toLowerCase());
+    enabled && GitHubClient.APP_SIGN_IN.hosts.includes(host.trim().toLowerCase());
 
   const readSignIns = sourceControlHost.settings.get.pipe(
     Effect.map(
@@ -261,7 +269,7 @@ export const make = Effect.gen(function* () {
       host,
       "/login/oauth/access_token",
       {
-        client_id: GITHUB_APP_CLIENT_ID,
+        client_id: clientId,
         grant_type: "refresh_token",
         refresh_token: session.refreshToken,
       },
@@ -363,7 +371,7 @@ export const make = Effect.gen(function* () {
         host,
         "/login/oauth/access_token",
         {
-          client_id: GITHUB_APP_CLIENT_ID,
+          client_id: clientId,
           device_code: deviceCode,
           grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         },
@@ -431,6 +439,13 @@ export const make = Effect.gen(function* () {
   const start: GitHubAppSignIn["Service"]["start"] = Effect.fn("GitHubAppSignIn.start")(
     function* (rawHost) {
       const host = rawHost.trim().toLowerCase();
+      if (!enabled) {
+        return yield* signInError(
+          host,
+          "unsupported",
+          `This server is not set up to sign in with ${GitHubClient.APP_SIGN_IN.appName}.`,
+        );
+      }
       if (!isAppHost(host)) {
         return yield* signInError(
           host,
@@ -441,7 +456,7 @@ export const make = Effect.gen(function* () {
       const code = yield* postForm(
         host,
         "/login/device/code",
-        { client_id: GITHUB_APP_CLIENT_ID },
+        { client_id: clientId },
         DeviceCodeResponse,
       ).pipe(
         Effect.mapError(
@@ -592,7 +607,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return GitHubAppSignIn.of({ token, invalidate, access, start, wait, cancel });
+  return GitHubAppSignIn.of({ enabled, token, invalidate, access, start, wait, cancel });
 });
 
 export const layer = Layer.effect(GitHubAppSignIn, make);

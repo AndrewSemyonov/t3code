@@ -27,6 +27,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
@@ -212,6 +213,9 @@ export const makeDiscovery = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
+  const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+  const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
+    appSignIn.enabled ? { ...item, appSignIn: true } : item;
 
   return {
     type: "managed-cli",
@@ -234,7 +238,8 @@ export const makeDiscovery = Effect.gen(function* () {
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
       const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
-      const signedIn = !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
+      const signedIn =
+        appSignIn.enabled && !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);
       const appName = GitHubClient.APP_SIGN_IN.appName;
       const tokenSource = savedToken
@@ -242,7 +247,9 @@ export const makeDiscovery = Effect.gen(function* () {
         : signedIn
           ? `the ${appName} sign-in`
           : variable;
-      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
+      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) {
+        return offerAppSignIn(cli);
+      }
       const viewer = yield* api
         .rest({ host: "github.com", operation: "discovery", path: "user" })
         .pipe(Effect.result);
@@ -250,7 +257,7 @@ export const makeDiscovery = Effect.gen(function* () {
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
         : undefined;
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
-      return {
+      return offerAppSignIn({
         ...cli,
         status: "available" as const,
         auth: {
@@ -282,7 +289,7 @@ export const makeDiscovery = Effect.gen(function* () {
                 })),
           ...accounts,
         },
-      } satisfies SourceControlProviderDiscoveryItem;
+      } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
     refineUnknownRemote: ({ context }) => {
@@ -335,7 +342,7 @@ function fromGitHubApiError(
       return failure(error.message, error);
     case "GitHubApiAuthenticationError":
       return failure(
-        "GitHub is not authenticated. Sign in with GitHub in Settings → Source Control, or run `gh auth login`, and retry.",
+        "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
         error,
       );
     case "GitHubApiRateLimitError":

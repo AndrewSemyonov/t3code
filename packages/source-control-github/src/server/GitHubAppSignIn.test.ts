@@ -108,6 +108,7 @@ const deviceCode = {
 describe("GitHubAppSignIn", () => {
   beforeEach(() => {
     for (const name of ["GH_TOKEN", "GITHUB_TOKEN"]) vi.stubEnv(name, "");
+    vi.stubEnv(GitHubAppSignIn.CLIENT_ID_VARIABLE, "Iv-test-client");
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -148,7 +149,7 @@ describe("GitHubAppSignIn", () => {
       // `slow_down` stretches the interval: polls at 5s, 10s, then 20s.
       const polls = requests.filter((request) => request.path === "/login/oauth/access_token");
       expect(polls).toHaveLength(3);
-      expect(polls[0]?.form.get("client_id")).toBe(GitHubAppSignIn.GITHUB_APP_CLIENT_ID);
+      expect(polls[0]?.form.get("client_id")).toBe("Iv-test-client");
       expect(polls[0]?.form.get("device_code")).toBe("device-1");
 
       const credential = yield* (yield* GitHubCredentials.GitHubCredentials).get("github.com");
@@ -192,6 +193,25 @@ describe("GitHubAppSignIn", () => {
       const waiting = yield* Effect.forkChild(Effect.flip(signIn.wait("github.com")));
       yield* TestClock.adjust("15 seconds");
       expect((yield* Fiber.join(waiting)).reason).toBe("expired");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does nothing with the app when the server has no client ID", () => {
+    vi.stubEnv(GitHubAppSignIn.CLIENT_ID_VARIABLE, "");
+    const { layer, requests } = harness({
+      signIns: { "github.com": session() },
+      handle: () => ({ body: deviceCode }),
+    });
+    return Effect.gen(function* () {
+      const signIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+      expect(signIn.enabled).toBe(false);
+      expect((yield* Effect.flip(signIn.start("github.com"))).reason).toBe("unsupported");
+      expect(yield* signIn.access("github.com", "acme/one")).toBe("signed-out");
+      // A session saved while it was on stays put but is not used.
+      const credential = yield* (yield* GitHubCredentials.GitHubCredentials).get("github.com");
+      expect(credential.source).toBe("gh");
+      expect(Object.keys(yield* savedSignIns)).toEqual(["github.com"]);
+      expect(requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

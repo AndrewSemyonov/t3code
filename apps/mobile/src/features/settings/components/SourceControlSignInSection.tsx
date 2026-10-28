@@ -10,6 +10,7 @@ import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
 import { Alert, Linking } from "react-native";
 
+import { useEnvironmentQuery } from "../../../state/query";
 import { serverEnvironment } from "../../../state/server";
 import { sourceControlEnvironment } from "../../../state/sourceControl";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -30,29 +31,63 @@ const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
     : [{ definition, appSignIn: definition.credentials.appSignIn }],
 );
 
-/** Signing an environment in through a forge's own app, such as T3 Code for GitHub. */
+/**
+ * Signing an environment in through a forge's own app, such as T3 Code for GitHub, on servers
+ * configured for it.
+ */
 export function SourceControlSignInSection(props: {
   readonly environments: readonly SettingsTarget[];
   readonly canWrite: (environmentId: EnvironmentId) => boolean;
 }) {
-  if (props.environments.length === 0) return null;
   return (
     <>
-      {appSignInHosts.map(({ definition, appSignIn }) => (
-        <SettingsSection key={definition.kind} title={definition.label}>
-          {props.environments.map((environment) => (
-            <AppSignInRow
-              key={environment.environmentId}
-              environment={environment}
-              label={props.environments.length > 1 ? environment.label : appSignIn.appName}
-              definition={definition}
-              appSignIn={appSignIn}
-              disabled={!props.canWrite(environment.environmentId)}
-            />
-          ))}
-        </SettingsSection>
-      ))}
+      {appSignInHosts.flatMap(({ definition, appSignIn }) =>
+        props.environments.map((environment) => (
+          <OfferedAppSignIn
+            key={`${definition.kind}:${environment.environmentId}`}
+            environment={environment}
+            title={
+              props.environments.length > 1
+                ? `${definition.label} · ${environment.label}`
+                : definition.label
+            }
+            definition={definition}
+            appSignIn={appSignIn}
+            disabled={!props.canWrite(environment.environmentId)}
+          />
+        )),
+      )}
     </>
+  );
+}
+
+function OfferedAppSignIn(props: {
+  readonly environment: SettingsTarget;
+  readonly title: string;
+  readonly definition: SourceControlDefinition;
+  readonly appSignIn: SourceControlAppSignIn;
+  readonly disabled: boolean;
+}) {
+  const discovery = useEnvironmentQuery(
+    sourceControlEnvironment.discovery({
+      environmentId: props.environment.environmentId,
+      input: {},
+    }),
+  );
+  const offered = discovery.data?.sourceControlProviders.some(
+    (item) => item.kind === props.definition.kind && item.appSignIn === true,
+  );
+  if (offered !== true) return null;
+  return (
+    <SettingsSection title={props.title}>
+      <AppSignInRow
+        environment={props.environment}
+        label={props.appSignIn.appName}
+        definition={props.definition}
+        appSignIn={props.appSignIn}
+        disabled={props.disabled}
+      />
+    </SettingsSection>
   );
 }
 
