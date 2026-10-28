@@ -18,8 +18,10 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   hasThreadLinks,
+  parseThreadLinkHref,
   relabelThreadLinks,
   resolveThreadLinkRef,
+  threadLinkEnvironmentIds,
 } from "@t3tools/shared/threadLinks";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -46,9 +48,9 @@ const EMPTY_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("mobile-thread:empty"),
 );
 const EMPTY_THREAD_TITLES: ReadonlyMap<ThreadId, string> = new Map();
-const EMPTY_THREAD_TITLES_ATOM = Atom.make(EMPTY_THREAD_TITLES).pipe(
-  Atom.withLabel("mobile-thread-titles:empty"),
-);
+const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make(
+  new Map<EnvironmentId, ReadonlyMap<ThreadId, string>>(),
+).pipe(Atom.withLabel("mobile-thread-link-titles:empty"));
 
 const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
   let previous = EMPTY_THREAD_TITLES;
@@ -62,6 +64,21 @@ const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
     }
     return previous;
   }).pipe(Atom.withLabel(`mobile-thread-titles:${environmentId}`));
+});
+
+const decodeEnvironmentIds = Schema.decodeUnknownSync(Schema.Array(EnvironmentId));
+
+const threadLinkTitlesAtom = Atom.family((key: string) => {
+  const environmentIds = decodeEnvironmentIds(JSON.parse(key));
+  return Atom.make(
+    (get) =>
+      new Map(
+        environmentIds.map((environmentId) => [
+          environmentId,
+          get(threadTitlesAtom(environmentId)),
+        ]),
+      ),
+  ).pipe(Atom.withLabel(`mobile-thread-link-titles:${key}`));
 });
 
 const decodeThreadKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
@@ -119,8 +136,13 @@ const threadChipIconsAtom = Atom.family((key: string) => {
     const icons = new Map<string, string>();
     for (const target of targets) {
       const source = scopeThreadRef(target.environmentId, target.threadId);
-      const ref = target.link
-        ? (resolveThreadLinkRef(source, get(environmentThreadShells.threadRefsAtom)) ?? source)
+      const link = target.link ? parseThreadLinkHref(target.href) : null;
+      const ref = link
+        ? (resolveThreadLinkRef(
+            link,
+            target.environmentId,
+            get(environmentThreadShells.threadRefsAtom),
+          ) ?? source)
         : source;
       const icon = get(
         threadProjectChipIconAtom(JSON.stringify([ref.environmentId, ref.threadId])),
@@ -190,11 +212,13 @@ export function useChildThreadInputs(ref: ScopedThreadRef) {
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
   const titles = useAtomValue(
-    hasThreadLinks(markdown) ? threadTitlesAtom(environmentId) : EMPTY_THREAD_TITLES_ATOM,
+    hasThreadLinks(markdown)
+      ? threadLinkTitlesAtom(JSON.stringify(threadLinkEnvironmentIds(markdown, environmentId)))
+      : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return titles.size === 0
-    ? markdown
-    : relabelThreadLinks(markdown, (threadId) => titles.get(threadId));
+  return relabelThreadLinks(markdown, environmentId, (ref) =>
+    titles.get(ref.environmentId)?.get(ref.threadId),
+  );
 }
 
 export function useThreadChipIcons(
