@@ -229,6 +229,8 @@ describe("AgentScope service", () => {
         units.set(unitOf(second), { activeState: "active", result: "success" });
         expect(yield* scope.oomKilled("a")).toBe(true);
         expect(yield* scope.oomKilled("b")).toBe(false);
+        units.set(unitOf(second), { activeState: "failed", result: "oom-kill" });
+        expect(yield* scope.oomKilled("b")).toBe(true);
       }),
     ),
   );

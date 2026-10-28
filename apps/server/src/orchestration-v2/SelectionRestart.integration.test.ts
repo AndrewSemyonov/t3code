@@ -457,10 +457,21 @@ it.live("moves a thread off its provider's shared session once sessions are per 
         failedReplacementOpen: true,
       });
       let capabilities = pooledCapabilities;
+      const resumedNativeIds: Array<string | undefined> = [];
       const adapter = makeRestartAdapter(state);
       const layerRegistry = ProviderAdapterRegistry.layerSingle({
         ...adapter,
         getCapabilities: () => Effect.sync(() => capabilities),
+        openSession: (sessionInput) =>
+          adapter.openSession(sessionInput).pipe(
+            Effect.map((runtime) => ({
+              ...runtime,
+              resumeThread: (resumeInput) =>
+                Effect.sync(() =>
+                  resumedNativeIds.push(resumeInput.providerThread.nativeThreadRef?.nativeId),
+                ).pipe(Effect.andThen(runtime.resumeThread(resumeInput))),
+            })),
+          ),
       });
       const sharedSessionId = IdAllocator.derive.providerSession({ providerInstanceId });
 
@@ -528,6 +539,8 @@ it.live("moves a thread off its provider's shared session once sessions are per 
       assert.equal(sessionIds.before, sharedSessionId);
       assert.isDefined(sessionIds.after);
       assert.notEqual(sessionIds.after, sharedSessionId);
+      // The new session resumes the thread's native conversation instead of starting over.
+      assert.deepEqual(resumedNativeIds, [`native-thread:${threadId}`]);
       assert.lengthOf((yield* Ref.get(state)).opened, 2);
     }),
   ),
