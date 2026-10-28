@@ -1,4 +1,4 @@
-import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import type { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
@@ -401,6 +401,7 @@ export interface ChatComposerProps {
 
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
+  typingGuard: ReturnType<typeof useComposerTypingGuard>;
   pendingUserInputs: PendingUserInput[];
   activePendingProgress: {
     questionIndex: number;
@@ -549,6 +550,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
     pendingApprovals,
+    typingGuard,
     pendingUserInputs: incomingPendingUserInputs,
     activePendingProgress: incomingPendingProgress,
     activePendingResolvedAnswers,
@@ -627,10 +629,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFocus: onTypingGuardFocus,
     onBlur: onTypingGuardBlur,
     onSend: onTypingGuardSend,
-  } = useComposerTypingGuard(composerDraftTargetKey, [
-    ...pendingApprovals.map((request) => request.requestId),
-    ...incomingPendingUserInputs.map((request) => request.requestId),
-  ]);
+  } = typingGuard;
   const activePendingApproval =
     incomingPendingApproval && !heldRequestIds.has(incomingPendingApproval.requestId)
       ? incomingPendingApproval

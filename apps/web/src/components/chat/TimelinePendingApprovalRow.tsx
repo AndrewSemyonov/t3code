@@ -56,7 +56,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       label={
         <code
           aria-label={presentation.detailLabel}
-          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           data-approval-detail="complete"
           tabIndex={0}
         >
@@ -69,7 +69,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}
         {approval.reason ? (
-          <span className="text-muted-foreground wrap-anywhere">{approval.reason}</span>
+          <span className="text-muted-foreground select-text wrap-anywhere">{approval.reason}</span>
         ) : null}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {canRespond ? (
