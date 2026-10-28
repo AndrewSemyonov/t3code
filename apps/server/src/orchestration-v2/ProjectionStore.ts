@@ -2829,7 +2829,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
       const boundary = anchors[0]!;
       return sql`
-                ${eligible}, work_segments AS (
+                ${eligible}, blocked_runs AS MATERIALIZED (
+                  SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
+                  WHERE thread_id = ${threadId} AND run_id IS NOT NULL
+                    AND ${window.deferWork ? 1 : 0} = 1
+                    AND (type IN ('run_interrupt_request', 'run_interrupt_result')
+                      OR (type = 'error' AND status = 'failed' AND parent_item_id IS NULL))
+                ), work_segments AS (
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type,
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
@@ -2838,12 +2844,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND (type <> 'dynamic_tool' OR (
                         payload_json NOT LIKE '%htmlRender%' AND payload_json NOT LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
                         AND payload_json NOT LIKE '%"viewedImagePath"%'))
-                      AND NOT EXISTS (
-                        SELECT 1 FROM orchestration_v2_projection_turn_items blocked
-                        WHERE blocked.run_id = eligible.run_id
-                          AND (blocked.type IN ('run_interrupt_request', 'run_interrupt_result')
-                            OR (blocked.type = 'error' AND blocked.status = 'failed' AND blocked.parent_item_id IS NULL))
-                      ) THEN 1 ELSE 0 END AS can_defer
+                      AND run_id NOT IN (SELECT run_id FROM blocked_runs)
+                      THEN 1 ELSE 0 END AS can_defer
                   FROM eligible
                   WHERE ${window.deferWork ? 1 : 0} = 1
                     AND ${boundary.latest === null ? 0 : 1} = 1
