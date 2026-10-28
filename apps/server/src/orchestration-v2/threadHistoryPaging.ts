@@ -5,6 +5,10 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import {
+  DEFERRED_WORK_ITEM_LIMIT,
+  isDeferrableWorkItem,
+} from "@t3tools/shared/orchestrationV2WorkHistory";
 
 /**
  * Every window stops at the byte budget. A window that holds a user turn also
@@ -46,6 +50,7 @@ export type ThreadHistoryCursorPayload = {
   readonly st: string;
   readonly si: string;
   readonly p: number;
+  readonly inclusive?: boolean;
 };
 
 type HistoryRow = Pick<
@@ -58,6 +63,13 @@ type HistoryRow = Pick<
     readonly inputIntent?: string;
     readonly createdBy?: string;
     readonly runId?: string | null;
+    readonly status?: OrchestrationV2TurnItem["status"];
+    readonly nodeId?: string | null;
+    readonly parentItemId?: string | null;
+    readonly ordinal?: number;
+    readonly runStatus?: string | undefined;
+    readonly persistentOutput?: boolean;
+    readonly deferredWork?: OrchestrationV2TurnItem["deferredWork"];
   };
 };
 export type SelectTimelinePageResult<Row extends HistoryRow = OrchestrationV2ProjectedTurnItem> = {
@@ -114,6 +126,7 @@ export function encodeThreadHistoryCursor(input: {
   readonly sourceThreadId: ThreadId | string;
   readonly sourceItemId: TurnItemId | string;
   readonly position: number;
+  readonly inclusive?: boolean;
 }): string {
   return encodeCursorPayload({
     v: 1,
@@ -121,6 +134,7 @@ export function encodeThreadHistoryCursor(input: {
     st: String(input.sourceThreadId),
     si: String(input.sourceItemId),
     p: input.position,
+    ...(input.inclusive ? { inclusive: true } : {}),
   });
 }
 
@@ -153,7 +167,8 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
     !("p" in parsed) ||
     typeof (parsed as { p: unknown }).p !== "number" ||
     !Number.isInteger((parsed as { p: number }).p) ||
-    (parsed as { p: number }).p < 0
+    (parsed as { p: number }).p < 0 ||
+    ("inclusive" in parsed && typeof parsed.inclusive !== "boolean")
   ) {
     throw new InvalidThreadHistoryCursorError();
   }
@@ -165,6 +180,94 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
     item.type === "user_message" &&
     (item.inputIntent === "turn_start" || item.inputIntent === "queued_turn")
   );
+}
+
+export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArray<Row>): Row[] {
+  const blocked = new Set(
+    items.flatMap(({ item }) =>
+      item.runId != null &&
+      (item.type === "run_interrupt_request" ||
+        item.type === "run_interrupt_result" ||
+        (item.type === "error" && item.status === "failed" && item.parentItemId == null))
+        ? [item.runId]
+        : [],
+    ),
+  );
+  const segments = new Map<string, number>();
+  const groups = new Map<string, Row[]>();
+  for (const row of items) {
+    const item = row.item;
+    if (item.runId == null) continue;
+    if (item.type === "user_message") segments.set(item.runId, (segments.get(item.runId) ?? 0) + 1);
+    if (
+      item.runStatus !== "completed" ||
+      blocked.has(item.runId) ||
+      !isDeferrableWorkItem({ ...item, status: item.status ?? "idle" })
+    )
+      continue;
+    const key = `${row.sourceThreadId}:${item.runId}:${segments.get(item.runId) ?? 0}`;
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  const omitted = new Set<Row>();
+  const anchors = new Map<Row, Row>();
+  for (const group of groups.values()) {
+    if (group.length <= DEFERRED_WORK_ITEM_LIMIT) continue;
+    const first = group[0]!;
+    const last = group.at(-1)!;
+    for (const row of group.slice(1)) omitted.add(row);
+    anchors.set(first, {
+      ...first,
+      item: {
+        ...first.item,
+        deferredWork: {
+          cursor: encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: last.sourceThreadId,
+            sourceItemId: last.sourceItemId,
+            position: last.position,
+            inclusive: true,
+          }),
+          itemCount: group.length,
+          lastOrdinal: last.item.ordinal ?? last.position,
+        },
+      },
+    });
+  }
+  return items.flatMap((row) => (omitted.has(row) ? [] : [anchors.get(row) ?? row]));
+}
+
+export function selectDeferredWorkPage<Row extends HistoryRow>(input: {
+  readonly items: ReadonlyArray<Row>;
+  readonly cursor: string;
+  readonly throughEntryId?: string | undefined;
+  readonly snapshotSequence: number;
+  readonly rowEncodedBytes?: ((row: Row) => number) | undefined;
+}): SelectTimelinePageResult<Row> {
+  const cursor = decodeThreadHistoryCursor(input.cursor);
+  const end = findCursorIndex(input.items, cursor) + (cursor.inclusive ? 1 : 0);
+  const start = input.items.findIndex((row) => row.sourceItemId === input.throughEntryId);
+  if (start < 0 || start >= end) throw new InvalidThreadHistoryCursorError();
+  const anchor = input.items[start]!;
+  const items = input.items
+    .slice(start, end)
+    .filter(
+      (row) =>
+        row.sourceThreadId === anchor.sourceThreadId &&
+        row.item.runId === anchor.item.runId &&
+        isDeferrableWorkItem({ ...row.item, status: row.item.status ?? "idle" }),
+    );
+  return selectOlderTimelinePage({
+    items,
+    exclusiveEndIndex: items.length,
+    snapshotSequence: input.snapshotSequence,
+    rowEncodedBytes: input.rowEncodedBytes,
+    policy: {
+      maxItems: DEFERRED_WORK_ITEM_LIMIT,
+      maxEncodedBytes: THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+    },
+  });
 }
 
 /** Notifications can start wake turns when they are the run's first input; match ProjectionStore run_starts. */
@@ -373,6 +476,22 @@ export function missingInterruptRequests<Row extends HistoryRow>(
   );
 }
 
+/** A window can start inside a long run, but its work still needs the user's prompt. */
+export function missingUserTurnStarts<Row extends HistoryRow>(
+  items: ReadonlyArray<Row>,
+  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId">>,
+): Row[] {
+  const runs = new Set(page.flatMap((row) => (row.item.runId == null ? [] : [row.item.runId])));
+  for (const row of page) {
+    if (isThreadHistoryUserTurn(row.item) && row.item.runId != null) runs.delete(row.item.runId);
+  }
+  if (runs.size === 0) return [];
+  return items.filter(
+    (row) =>
+      isThreadHistoryUserTurn(row.item) && row.item.runId != null && runs.has(row.item.runId),
+  );
+}
+
 function isLocalProjectedRow(
   projection: OrchestrationV2ThreadProjection,
   row: OrchestrationV2ProjectedTurnItem,
@@ -409,16 +528,7 @@ function localTurnItemsForVisibleWindow(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2TurnItem[] {
-  const localIds = new Set<string>();
-  for (const row of visible) {
-    if (isLocalProjectedRow(projection, row)) {
-      localIds.add(String(row.sourceItemId));
-    }
-  }
-  if (localIds.size === 0) {
-    return [];
-  }
-  return projection.turnItems.filter((item) => localIds.has(String(item.id)));
+  return visible.filter((row) => isLocalProjectedRow(projection, row)).map((row) => row.item);
 }
 
 function messagesForBoundedProjection(
@@ -492,6 +602,7 @@ export function buildBoundedThreadProjection(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly snapshotSequence: number;
   readonly policy?: ThreadHistoryPagePolicy | undefined;
+  readonly historyContextItems?: OrchestrationV2ThreadProjection["visibleTurnItems"] | undefined;
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
@@ -528,6 +639,14 @@ export function buildBoundedThreadProjection(input: {
         reserve += bytesOfJson(item);
       }
     }
+    for (const row of [
+      ...(input.historyContextItems ?? []),
+      ...controlProjection.visibleTurnItems,
+    ]) {
+      if (isThreadHistoryUserTurn(row.item)) {
+        reserve += projectedRowBoundedSnapshotEncodedBytes(row, threadId);
+      }
+    }
     return reserve;
   })();
   const controlBytes = bytesOfJson({
@@ -550,7 +669,13 @@ export function buildBoundedThreadProjection(input: {
     policy: windowPolicy,
     rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
   });
-  const visibleTurnItems = renumberPositions(window.items);
+  const visibleTurnItems = renumberPositions([
+    ...missingUserTurnStarts(
+      [...(input.historyContextItems ?? []), ...controlProjection.visibleTurnItems],
+      window.items,
+    ),
+    ...window.items,
+  ]);
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,

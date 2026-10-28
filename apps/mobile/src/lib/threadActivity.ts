@@ -231,6 +231,7 @@ type ThreadFeedEntryContent =
     }
   | {
       readonly type: "run-fold";
+      readonly deferredWorkItemIds?: ReadonlyArray<string>;
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId;
@@ -1083,6 +1084,7 @@ export function threadFeedActivityIsVisible(
 }
 
 interface ThreadFeedRunFold {
+  readonly deferredWorkItemIds?: ReadonlyArray<string>;
   readonly runId: RunId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
@@ -1274,7 +1276,17 @@ function deriveThreadFeedRunFolds(
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
+    const deferredWorkItemIds = group.entries.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? entry.activities.flatMap((activity) =>
+            activity.projectedItem.item.deferredWork
+              ? [String(activity.projectedItem.sourceItemId)]
+              : [],
+          )
+        : [],
+    );
     foldsByAnchorId.set(firstHiddenEntry.id, {
+      ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
       runId,
       createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
@@ -1502,11 +1514,13 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
-        row.expanded !== expanded
+        row.expanded !== expanded ||
+        row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
       ) {
         row = {
           type: "run-fold",
           id: `run-fold:${fold.runId}`,
+          ...(fold.deferredWorkItemIds ? { deferredWorkItemIds: fold.deferredWorkItemIds } : {}),
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,

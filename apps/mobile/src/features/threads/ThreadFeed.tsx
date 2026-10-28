@@ -1232,6 +1232,84 @@ function compactionLabel(label: string, title: string | undefined) {
     : label;
 }
 
+function RunFoldButton({
+  entry,
+  environmentId,
+  threadId,
+  onToggle,
+  rowSizing,
+  iconColor,
+}: {
+  entry: Extract<ThreadFeedEntry, { type: "run-fold" }>;
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  onToggle: (runId: RunId) => void;
+  rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  iconColor: ColorValue;
+}) {
+  const loadWork = useAtomCommand(threadEnvironment.loadWorkHistory, { reportFailure: false });
+  const anchorsKey = entry.deferredWorkItemIds?.join("\n") ?? "";
+  const [failure, setFailure] = useState<{ attempt: number; message: string } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const error = anchorsKey && failure?.attempt === retry ? failure.message : null;
+  const loading = entry.expanded && anchorsKey !== "" && error === null;
+  const requestWork = useEffectEvent(
+    (anchorIds: string[], environmentId: EnvironmentId, threadId: ThreadId) =>
+      Promise.all(
+        anchorIds.map((anchorId) => loadWork({ environmentId, input: { threadId, anchorId } })),
+      ),
+  );
+  // oxlint-disable-next-line t3code/react-effect-budget -- Expanded folds restore their deferred server history.
+  useEffect(() => {
+    if (!entry.expanded || !anchorsKey) return;
+    let active = true;
+    void requestWork(anchorsKey.split("\n"), environmentId, threadId).then((results) => {
+      if (!active) return;
+      const failed = results.some(
+        (result) => result._tag === "Failure" || result.value._tag === "error",
+      );
+      setFailure(failed ? { attempt: retry, message: "Couldn't load work. Tap to retry." } : null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [entry.expanded, anchorsKey, retry, environmentId, threadId]);
+  const toggle = () => {
+    if (error !== null && entry.expanded) {
+      setFailure(null);
+      setRetry((value) => value + 1);
+    } else {
+      setFailure(null);
+      onToggle(entry.runId);
+    }
+  };
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: entry.expanded, busy: loading }}
+      onPress={toggle}
+      hitSlop={4}
+      className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
+      style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, rowSizing.estimatedRowHeight) }}
+    >
+      <Text
+        key={rowSizing.textSizeKey}
+        numberOfLines={1}
+        className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
+      >
+        {entry.label}
+        {loading ? " · Loading work..." : error ? ` · ${error}` : ""}
+      </Text>
+      <ThreadDisclosureChevron
+        expanded={entry.expanded}
+        collapsedDirection="right"
+        size={15}
+        tintColor={iconColor}
+      />
+    </Pressable>
+  );
+}
+
 function renderFeedEntry(
   info: { item: ThreadFeedRow; index: number },
   props: Pick<
@@ -1303,30 +1381,14 @@ function renderFeedEntry(
   if (entry.type === "run-fold") {
     return (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded: entry.expanded }}
-          onPress={() => props.onToggleTurnFold(entry.runId)}
-          hitSlop={4}
-          className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
-          style={{
-            minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
-          }}
-        >
-          <Text
-            key={props.workRowSizing.textSizeKey}
-            numberOfLines={1}
-            className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
-          >
-            {entry.label}
-          </Text>
-          <ThreadDisclosureChevron
-            expanded={entry.expanded}
-            collapsedDirection="right"
-            size={15}
-            tintColor={iconSubtleColor}
-          />
-        </Pressable>
+        <RunFoldButton
+          entry={entry}
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          onToggle={props.onToggleTurnFold}
+          rowSizing={props.workRowSizing}
+          iconColor={iconSubtleColor}
+        />
         {entry.checkpointSummary ? (
           <TurnDiffStat
             checkpoint={entry.checkpointSummary}

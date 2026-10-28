@@ -271,6 +271,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
 
   return {
     threadState,
+    loadWork: (anchorId: string) =>
+      historyController.loadWork(TARGET.environmentId, THREAD_ID, anchorId),
     loadEarlier: (throughEntryId?: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
     reconcilePendingWork: historyController.reconcilePendingWork(TARGET.environmentId, THREAD_ID),
@@ -362,6 +364,112 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each(["expand", "retry", "target"] as const)(
+    "loads deferred work only on demand and resumes after an error: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const command = (
+          ordinal: number,
+        ): Extract<OrchestrationV2TurnItem, { type: "command_execution" }> => ({
+          id: TurnItemId.make(`work-${ordinal}`),
+          threadId: THREAD_ID,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          title: null,
+          startedAt: v2Now,
+          completedAt: v2Now,
+          updatedAt: v2Now,
+          type: "command_execution",
+          input: "pwd",
+        });
+        const anchor = {
+          ...command(1),
+          deferredWork: { cursor: "first", itemCount: 3, lastOrdinal: 4 },
+        };
+        const notice: OrchestrationV2TurnItem = {
+          ...command(2),
+          type: "system_notice",
+          message: "Visible notice",
+        };
+        const row = (item: OrchestrationV2TurnItem) => ({
+          position: item.ordinal,
+          visibility: "local" as const,
+          sourceThreadId: THREAD_ID,
+          sourceItemId: item.id,
+          item,
+        });
+        const requests: string[] = [];
+        let failed = false;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            expect(url.searchParams.get("view")).toBe("work");
+            expect(url.searchParams.get("throughEntryId")).toBe(anchor.id);
+            const cursor = url.searchParams.get("cursor")!;
+            requests.push(cursor);
+            if (cursor === "second" && mode === "retry" && !failed) {
+              failed = true;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("Unavailable", { status: 503 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 14,
+                  items: [row(command(cursor === "first" ? 4 : 3))],
+                  nextCursor: cursor === "first" ? "second" : null,
+                  hasMoreHistory: cursor === "first",
+                }),
+              ),
+            );
+          }),
+        });
+        yield* Queue.offer(harness.inputs, {
+          ...snapshot(
+            {
+              ...BASE_PROJECTION,
+              turnItems: [anchor, notice],
+              visibleTurnItems: [row(anchor), row(notice)],
+            },
+            14,
+          ),
+          historyCursor: "older",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 4,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (state) => state.history.historyCursor === "older",
+        );
+        expect(requests).toEqual([]);
+        const result = yield* mode === "target"
+          ? harness.loadEarlier("work-3")
+          : harness.loadWork(anchor.id);
+        if (mode === "retry") {
+          expect(result._tag).toBe("error");
+          const partial = Option.getOrThrow((yield* SubscriptionRef.get(harness.threadState)).data);
+          expect(partial.visibleTurnItems[0]?.item.deferredWork?.cursor).toBe("second");
+          expect(yield* harness.loadWork(anchor.id)).toEqual({ _tag: "loaded" });
+        } else expect(result).toEqual({ _tag: "loaded" });
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        const projection = Option.getOrThrow(state.data);
+        expect(projection.visibleTurnItems.map((row) => row.item.ordinal)).toEqual([1, 2, 3, 4]);
+        expect(projection.visibleTurnItems[0]?.item.deferredWork).toBeUndefined();
+        expect(state.history.historyCursor).toBe("older");
+        expect(yield* harness.loadWork(anchor.id)).toEqual({ _tag: "loaded" });
+        expect(requests).toEqual(
+          mode === "retry" ? ["first", "second", "second"] : ["first", "second"],
+        );
+      }),
+  );
+
   it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
     Effect.gen(function* () {
       const item: OrchestrationV2TurnItem = {

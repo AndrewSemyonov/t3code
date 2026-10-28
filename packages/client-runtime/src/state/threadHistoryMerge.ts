@@ -128,6 +128,70 @@ export function applyHistoryPageMeta(
   };
 }
 
+export function mergeDeferredWorkIntoProjection(
+  projection: OrchestrationV2ThreadProjection,
+  anchorId: string,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  nextCursor: string | null,
+): OrchestrationV2ThreadProjection {
+  const start = projection.visibleTurnItems.findIndex((row) => row.sourceItemId === anchorId);
+  const anchor = projection.visibleTurnItems[start];
+  const deferred = anchor?.item.deferredWork;
+  if (anchor === undefined || deferred === undefined) return projection;
+  let end = start + 1;
+  while (end < projection.visibleTurnItems.length) {
+    const row = projection.visibleTurnItems[end]!;
+    if (
+      row.sourceThreadId !== anchor.sourceThreadId ||
+      row.visibility === "synthetic" ||
+      row.item.ordinal > deferred.lastOrdinal
+    )
+      break;
+    end += 1;
+  }
+  const current = new Map(
+    projection.visibleTurnItems.slice(start, end).map((row) => [projectedItemKey(row), row]),
+  );
+  const local = new Map(projection.turnItems.map((item) => [String(item.id), item]));
+  for (const row of items) {
+    if (
+      row.sourceThreadId !== anchor.sourceThreadId ||
+      row.item.ordinal < anchor.item.ordinal ||
+      row.item.ordinal > deferred.lastOrdinal ||
+      current.has(projectedItemKey(row))
+    )
+      continue;
+    if (row.visibility === "local" && local.has(String(row.item.id))) continue;
+    current.set(projectedItemKey(row), row);
+    if (row.visibility === "local") local.set(String(row.item.id), row.item);
+  }
+  const { deferredWork: _deferred, ...complete } = anchor.item;
+  const updated = {
+    ...anchor,
+    item:
+      nextCursor === null
+        ? complete
+        : {
+            ...anchor.item,
+            deferredWork: { ...deferred, cursor: nextCursor },
+          },
+  };
+  current.set(projectedItemKey(anchor), updated);
+  if (anchor.visibility === "local") local.set(String(anchor.item.id), updated.item);
+  const section = [...current.values()].sort(
+    (left, right) => left.item.ordinal - right.item.ordinal,
+  );
+  return {
+    ...projection,
+    turnItems: [...local.values()],
+    visibleTurnItems: renumberVisible([
+      ...projection.visibleTurnItems.slice(0, start),
+      ...section,
+      ...projection.visibleTurnItems.slice(end),
+    ]),
+  };
+}
+
 export function shouldShowLoadEarlierControl(history: ThreadHistoryMeta): boolean {
   return history.hasMoreHistory || history.error !== null;
 }

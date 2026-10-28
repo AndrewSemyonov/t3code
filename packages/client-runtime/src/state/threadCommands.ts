@@ -166,6 +166,19 @@ export function createThreadEnvironmentAtoms<R, E>(
       input.throughEntryId,
     );
   });
+  const loadWorkHistory = Effect.fn("ThreadCommands.loadWorkHistory")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly anchorId: string;
+  }) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const controller = yield* Effect.serviceOption(ThreadHistoryController.ThreadHistoryController);
+    if (Option.isNone(controller)) return { _tag: "noop" } as const;
+    return yield* controller.value.loadWork(
+      supervisor.target.environmentId,
+      input.threadId,
+      input.anchorId,
+    );
+  });
 
   // Runs whether or not the server accepted the interrupt, so a stale cached item still
   // settles when Stop had nothing to interrupt; the interrupt's own failure still surfaces.
@@ -426,6 +439,16 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "serial",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
+    }),
+    loadWorkHistory: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:load-work-history",
+      execute: loadWorkHistory,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.anchorId]),
       },
     }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

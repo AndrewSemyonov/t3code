@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   buildBoundedThreadProjection,
+  deferWorkHistoryRows,
   boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
   encodeThreadHistoryCursor,
@@ -155,6 +156,93 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("defers only completed work beyond 75 items and keeps conversation and persistent rows", () => {
+    const work = Array.from({ length: 76 }, (_, index) => {
+      const row = makeRow(index);
+      return { ...row, item: { ...row.item, runId: RUN, runStatus: "completed" } };
+    });
+    expect(deferWorkHistoryRows(work.slice(0, 75))).toHaveLength(75);
+    const compaction = {
+      ...work[0]!,
+      sourceItemId: TurnItemId.make("compaction"),
+      item: {
+        ...work[0]!.item,
+        type: "compaction" as const,
+      },
+    };
+    const persistent = {
+      ...work[0]!,
+      sourceItemId: TurnItemId.make("render"),
+      item: {
+        ...work[0]!.item,
+        type: "dynamic_tool" as const,
+        persistentOutput: true,
+      },
+    };
+    const deferred = deferWorkHistoryRows([
+      ...work.slice(0, 30),
+      compaction,
+      persistent,
+      ...work.slice(30),
+    ]);
+    expect(deferred.map((row) => row.sourceItemId)).toEqual(["item-0", "compaction", "render"]);
+    expect(deferred[0]?.item.deferredWork?.itemCount).toBe(76);
+    for (const runStatus of ["running", "failed", "interrupted", "cancelled"]) {
+      expect(
+        deferWorkHistoryRows(work.map((row) => ({ ...row, item: { ...row.item, runStatus } }))),
+      ).toHaveLength(76);
+    }
+    const interrupted = {
+      ...compaction,
+      item: { ...compaction.item, type: "run_interrupt_result" as const },
+    };
+    expect(deferWorkHistoryRows([...work, interrupted])).toHaveLength(77);
+    const failed = {
+      ...compaction,
+      item: {
+        ...compaction.item,
+        type: "error" as const,
+        status: "failed" as const,
+        nodeId: "root-node",
+        parentItemId: null,
+      },
+    };
+    expect(deferWorkHistoryRows([...work, failed])).toHaveLength(77);
+  });
+
+  it("retains a long turn's user prompt when the byte budget cuts through its work", () => {
+    const items: OrchestrationV2ProjectedTurnItem[] = Array.from({ length: 315 }, (_, index) => {
+      const row = makeRow(index, { outputBytes: 2_000 });
+      return { ...row, item: { ...row.item, runId: RUN } };
+    });
+    items[0] = {
+      ...items[0]!,
+      item: {
+        ...items[0]!.item,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        messageId: MessageId.make("webgl-prompt"),
+        text: "Investigate WebGL in a separate VM",
+        attachments: [],
+      },
+    } as OrchestrationV2ProjectedTurnItem;
+    const bounded = buildBoundedThreadProjection({
+      projection: makeProjection(items),
+      snapshotSequence: 1,
+    });
+
+    expect(bounded.projection.visibleTurnItems[0]?.item).toEqual(items[0]!.item);
+    expect(bounded.projection.visibleTurnItems.at(-1)?.item).toEqual(items.at(-1)!.item);
+    expect(bounded.projection.turnItems).toContain(items[0]!.item);
+    expect(bounded.projection.visibleTurnItems.length).toBeLessThan(items.length);
+    expect(bounded.hasMoreHistory).toBe(true);
+    expect(boundedTimelineEncodedBytes(bounded.projection)).toBeLessThanOrEqual(
+      THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+    );
+  });
+
   it("keeps a human turn whole up to the turn row budget and pages a longer one from inside", () => {
     const humanTurn = (length: number) => {
       const items = Array.from({ length }, (_, index) => makeRow(index));

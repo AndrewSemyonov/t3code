@@ -10,6 +10,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   PlanId,
@@ -1915,6 +1916,89 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
         Array.from({ length: 1_000 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
       );
+
+      yield* setNewestTurnType("command_execution");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET run_id = 'run:bounded-sql-history:1',
+          payload_json = json_set(payload_json, '$.runId', 'run:bounded-sql-history:1')
+        WHERE thread_id = ${threadId}
+      `;
+      const longTurnSnapshot = yield* humanWindow();
+      assert.lengthOf(longTurnSnapshot.projection.visibleTurnItems, sqlPageLimit);
+      const longTurnPage = buildBoundedThreadProjection({
+        ...longTurnSnapshot,
+      });
+      const promptId = TurnItemId.make("turn-item:bounded-sql-history:1");
+      assert.strictEqual(longTurnPage.projection.visibleTurnItems[0]?.sourceItemId, promptId);
+      const longTurnIds = new Set(
+        longTurnPage.projection.visibleTurnItems.map((row) => row.sourceItemId),
+      );
+      let longTurnCursor = longTurnPage.historyCursor;
+      for (let pages = 0; longTurnCursor !== null; pages += 1) {
+        assert.isBelow(pages, 20);
+        assert.notStrictEqual(decodeThreadHistoryCursor(longTurnCursor).si, promptId);
+        const page = yield* projectionStore.getThreadHistoryPage(threadId, longTurnCursor);
+        assert.strictEqual(page.items[0]?.sourceItemId, promptId);
+        for (const row of page.items) longTurnIds.add(row.sourceItemId);
+        longTurnCursor = page.nextCursor;
+      }
+      assert.strictEqual(longTurnIds.size, 1_000);
+      const conversation = yield* projectionStore.getThreadHistoryPage(
+        threadId,
+        longTurnPage.historyCursor!,
+        undefined,
+        true,
+      );
+      assert.strictEqual(conversation.items[0]?.sourceItemId, promptId);
+      const deferred = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: 10,
+        deferWork: true,
+      });
+      assert.lengthOf(deferred.projection.visibleTurnItems, 3);
+      assert.strictEqual(deferred.projection.visibleTurnItems[0]?.sourceItemId, promptId);
+      const anchor = deferred.projection.visibleTurnItems[1]!;
+      assert.strictEqual(anchor.item.deferredWork?.itemCount, 999);
+      const workIds = new Set<TurnItemId>();
+      let workCursor: string | null = anchor.item.deferredWork!.cursor;
+      for (let pages = 0; workCursor !== null; pages += 1) {
+        assert.isBelow(pages, 20);
+        const page: OrchestrationV2ThreadHistoryPage = yield* projectionStore.getThreadHistoryPage(
+          threadId,
+          workCursor,
+          anchor.sourceItemId,
+          false,
+          "work",
+        );
+        assert.isAtMost(page.items.length, 75);
+        for (const row of page.items) workIds.add(row.sourceItemId);
+        workCursor = page.nextCursor;
+      }
+      assert.strictEqual(workIds.size, 999);
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal = 1
+      `;
+      const backgroundWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: 10,
+        deferWork: true,
+      });
+      assert.lengthOf(backgroundWindow.projection.visibleTurnItems, sqlPageLimit);
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'user_message', payload_json = json_set(payload_json, '$.type', 'user_message')
+        WHERE thread_id = ${threadId} AND ordinal = 1
+      `;
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET run_id = 'run:bounded-sql-history:' || ordinal,
+          payload_json = json_set(payload_json, '$.runId', 'run:bounded-sql-history:' || ordinal)
+        WHERE thread_id = ${threadId}
+      `;
+      yield* setNewestTurnType("user_message");
 
       const tiedIds = [
         TurnItemId.make("turn-item:bounded-sql-history:tie:b"),

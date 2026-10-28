@@ -1,3 +1,5 @@
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
@@ -31,6 +33,8 @@ import {
   use,
   useContext,
   useLayoutEffect,
+  useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ReactNode,
@@ -1552,6 +1556,48 @@ function ContextCompactionTimelineRow({
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const loadWork = useAtomCommand(threadEnvironment.loadWorkHistory, { reportFailure: false });
+  const ref = parseScopedThreadKey(ctx.routeThreadKey);
+  const environmentId = ref?.environmentId;
+  const threadId = ref?.threadId;
+  const anchorsKey = row.deferredWorkItemIds?.join("\n") ?? "";
+  const [failure, setFailure] = useState<{ attempt: number; message: string } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const error = anchorsKey && failure?.attempt === retry ? failure.message : null;
+  const loading = row.expanded && anchorsKey !== "" && error === null;
+  const requestWork = useEffectEvent(
+    (anchorIds: string[], environmentId: EnvironmentId, threadId: ThreadId) =>
+      Promise.all(
+        anchorIds.map((anchorId) => loadWork({ environmentId, input: { threadId, anchorId } })),
+      ),
+  );
+  // oxlint-disable-next-line t3code/react-effect-budget -- Expanded folds restore their deferred server history.
+  useEffect(() => {
+    if (!row.expanded || !anchorsKey || environmentId === undefined || threadId === undefined)
+      return;
+    let active = true;
+    void requestWork(anchorsKey.split("\n"), environmentId, threadId).then((results) => {
+      if (!active) return;
+      const failed = results.some(
+        (result) => result._tag === "Failure" || result.value._tag === "error",
+      );
+      setFailure(
+        failed ? { attempt: retry, message: "Couldn't load work. Click to retry." } : null,
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [row.expanded, anchorsKey, retry, environmentId, threadId]);
+  const toggle = () => {
+    if (error !== null && row.expanded) {
+      setFailure(null);
+      setRetry((value) => value + 1);
+    } else {
+      setFailure(null);
+      ctx.onToggleTurnFold(row.runId);
+    }
+  };
 
   return (
     <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
@@ -1559,10 +1605,14 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         type="button"
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.runId)}
+        onClick={toggle}
+        aria-busy={loading}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <span>{row.label}</span>
+        <span>
+          {row.label}
+          {loading ? " · Loading work..." : error ? ` · ${error}` : ""}
+        </span>
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
       </button>
       <TimelineRowTimestamp

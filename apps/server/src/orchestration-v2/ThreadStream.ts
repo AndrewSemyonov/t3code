@@ -10,7 +10,7 @@ import {
   buildBoundedThreadProjection,
   type BoundedProjectionResult,
 } from "./threadHistoryPaging.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import { projectThreadProjectionForWire, projectTurnItemForWire } from "./WireProjection.ts";
 
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 
@@ -65,10 +65,15 @@ export function buildBoundedThreadStreamSnapshot(input: {
   readonly compactTurnItems?: boolean;
   readonly dedupeBodies?: boolean;
   readonly compactIds?: boolean;
+  readonly historyContextItems?: OrchestrationV2ThreadProjection["visibleTurnItems"];
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
     projection: projectThreadProjectionForWire(input.projection),
+    historyContextItems: input.historyContextItems?.map((row) => ({
+      ...row,
+      item: projectTurnItemForWire(row.item),
+    })),
   });
   return {
     kind: "snapshot",

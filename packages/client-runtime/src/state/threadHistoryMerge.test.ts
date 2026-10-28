@@ -1,9 +1,15 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
+import {
+  mergeOlderHistoryIntoProjection,
+  mergeDeferredWorkIntoProjection,
+} from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -39,6 +45,93 @@ function row(index: number): OrchestrationV2ProjectedTurnItem {
 }
 
 describe("threadHistoryMerge", () => {
+  it("fills deferred work around visible rows and keeps newer edits and inherited ownership", () => {
+    for (const inherited of [false, true]) {
+      const source = (index: number) => ({
+        ...row(index),
+        visibility: inherited ? ("inherited" as const) : ("local" as const),
+      });
+      const anchor = {
+        ...source(1),
+        item: {
+          ...source(1).item,
+          deferredWork: { cursor: "first", itemCount: 4, lastOrdinal: 5 },
+        },
+      };
+      const visible = [source(0), anchor, source(3), source(5)];
+      const projection = {
+        ...v2Projection,
+        visibleTurnItems: visible,
+        turnItems: inherited ? [] : visible.map((row) => row.item),
+      };
+      const partial = mergeDeferredWorkIntoProjection(
+        projection,
+        anchor.sourceItemId,
+        [source(4)],
+        "next",
+      );
+      expect(partial.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+        "item-0",
+        "item-1",
+        "item-3",
+        "item-4",
+        "item-5",
+      ]);
+      expect(partial.visibleTurnItems[1]?.item.deferredWork?.cursor).toBe("next");
+      const stale = { ...source(3), item: { ...source(3).item, title: "stale" } };
+      const complete = mergeDeferredWorkIntoProjection(
+        partial,
+        anchor.sourceItemId,
+        [source(1), source(2), stale],
+        null,
+      );
+      expect(complete.visibleTurnItems.map((row) => row.sourceItemId)).toEqual(
+        Array.from({ length: 6 }, (_, i) => `item-${i}`),
+      );
+      expect(complete.visibleTurnItems[3]?.item.title).toBe("Command 3");
+      expect(complete.visibleTurnItems[1]?.item.deferredWork).toBeUndefined();
+      expect(complete.turnItems).toHaveLength(inherited ? 0 : 6);
+      expect(mergeDeferredWorkIntoProjection(complete, anchor.sourceItemId, [], null)).toBe(
+        complete,
+      );
+    }
+  });
+
+  it("keeps a retained user prompt ahead of work as older pages fill the same turn", () => {
+    const first = row(0);
+    if (first.item.type !== "command_execution") throw new Error("Expected command fixture");
+    const prompt: OrchestrationV2ProjectedTurnItem = {
+      ...first,
+      item: {
+        ...first.item,
+        type: "user_message",
+        messageId: "prompt" as never,
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        text: "Investigate WebGL",
+        attachments: [],
+      },
+    };
+    const recent = [prompt, row(5), row(6)];
+    let projection: OrchestrationV2ThreadProjection = {
+      ...v2Projection,
+      turnItems: recent.map((entry) => entry.item),
+      visibleTurnItems: recent,
+    };
+    for (const page of [[prompt, row(3), row(4)], [prompt, row(1), row(2)], [prompt]]) {
+      projection = mergeOlderHistoryIntoProjection(projection, page);
+      expect(projection.visibleTurnItems[0]?.item).toBe(prompt.item);
+      expect(projection.visibleTurnItems.map((entry) => entry.item.ordinal)).toEqual(
+        projection.visibleTurnItems.map((entry) => entry.item.ordinal).toSorted((a, b) => a - b),
+      );
+    }
+    expect(projection.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual(
+      Array.from({ length: 7 }, (_, index) => `item-${index}`),
+    );
+    expect(projection.turnItems).toHaveLength(7);
+  });
+
   it("fills activity around partial messages in canonical order and preserves live edits", () => {
     const initial = { ...v2Projection, turnItems: [row(4).item], visibleTurnItems: [row(4)] };
     const preview = [row(1), row(3)];
