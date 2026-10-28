@@ -38,7 +38,6 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
-import { useComposerTypingGuard } from "./chat/useComposerTypingGuard";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -115,6 +114,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useStore } from "zustand";
+import { shallow } from "zustand/vanilla/shallow";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -211,7 +211,6 @@ import {
 } from "../sidebarPendingFileDropStore";
 import {
   composerDraftHasUserContent,
-  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1314,10 +1313,12 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
     setThreadError,
   });
-  const typingGuard = useComposerTypingGuard(composerTargetKey(composerDraftTarget), [
-    ...pendingApprovals.map((request) => request.requestId),
-    ...pendingUserInputs.map((request) => request.requestId),
-  ]);
+  const [heldApprovalRequestIds, setHeldApprovalRequestIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const onHeldRequestIdsChange = useStableCallback((requestIds: ReadonlySet<string>) => {
+    setHeldApprovalRequestIds((current) => (shallow(current, requestIds) ? current : requestIds));
+  });
   const activeProposedPlan = (() => {
     if (!latestRunSettled) {
       return null;
@@ -3278,7 +3279,7 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <ThreadTimeline
                 pendingApprovals={pendingApprovals}
-                heldApprovalRequestIds={typingGuard.heldRequestIds}
+                heldApprovalRequestIds={heldApprovalRequestIds}
                 respondingRequestIds={respondingRequestIds}
                 onRespondToApproval={onRespondToApprovalStable}
                 canOperateThread={canOperateThread}
@@ -3531,7 +3532,7 @@ export default function ChatView(props: ChatViewProps) {
                               environmentUnavailable={activeEnvironmentUnavailableState}
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
-                              typingGuard={typingGuard}
+                              onHeldRequestIdsChange={onHeldRequestIdsChange}
                               pendingUserInputs={pendingUserInputs}
                               activePendingProgress={activePendingProgress}
                               activePendingResolvedAnswers={activePendingResolvedAnswers}
