@@ -1007,12 +1007,12 @@ export const layerClientApi = HttpApiBuilder.group(
         "createT3ChatLinkRequest",
         Effect.fn("relay.api.client.createT3ChatLinkRequest")(function* () {
           const { userId } = yield* RelayClientPrincipal;
-          const email = yield* lookupClerkPrimaryEmail(config, userId).pipe(
-            Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")),
+          const url = yield* t3Chat.createLinkUrl({ userId }).pipe(
+            Effect.catchTags({
+              T3ChatNotConfigured: () => relayInternalErrorResponse("internal_error"),
+              ClerkUserLookupFailed: () => relayInternalErrorResponse("upstream_unavailable"),
+            }),
           );
-          const url = yield* t3Chat
-            .createLinkUrl({ userId, email })
-            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
           return { url };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
@@ -1716,29 +1716,6 @@ function verifyClerkOAuthBearerToken(
     },
     catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
   });
-}
-
-class ClerkUserLookupFailed extends Schema.TaggedError<ClerkUserLookupFailed>()(
-  "ClerkUserLookupFailed",
-  { cause: Schema.Defect() },
-) {}
-
-function lookupClerkPrimaryEmail(
-  config: RelayConfiguration.RelayConfiguration["Service"],
-  userId: string,
-) {
-  return Effect.tryPromise({
-    try: async () => {
-      const user = await createClerkClient({
-        secretKey: Redacted.value(config.clerkSecretKey),
-        publishableKey: config.clerkPublishableKey,
-      }).users.getUser(userId);
-      const email = user.primaryEmailAddress?.emailAddress;
-      if (!email) throw new Error("Clerk user has no primary email address.");
-      return email;
-    },
-    catch: (cause) => new ClerkUserLookupFailed({ cause }),
-  }).pipe(Effect.withSpan("lookup_clerk_primary_email"));
 }
 
 export function verifyRelayClientBearerToken(

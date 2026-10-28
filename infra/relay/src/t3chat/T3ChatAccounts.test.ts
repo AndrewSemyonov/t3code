@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as HttpClient from "effect/http/HttpClient";
@@ -7,6 +10,14 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as T3ChatAccounts from "./T3ChatAccounts.ts";
+
+vi.mock("@clerk/backend", () => ({
+  createClerkClient: () => ({
+    users: {
+      getUser: async () => ({ primaryEmailAddress: { emailAddress: "a@b.co" } }),
+    },
+  }),
+}));
 
 const SECRET = "shared-link-secret";
 
@@ -68,7 +79,7 @@ describe("T3ChatAccounts", () => {
   it.effect("signs link tokens in the format T3 Chat verifies", () =>
     Effect.gen(function* () {
       const accounts = yield* T3ChatAccounts.T3ChatAccounts;
-      const url = new URL(yield* accounts.createLinkUrl({ userId: "user_1", email: "a@b.co" }));
+      const url = new URL(yield* accounts.createLinkUrl({ userId: "user_1" }));
       expect(`${url.origin}${url.pathname}`).toBe("https://chat.example.test/link/t3code");
 
       const [payload = "", signature = ""] = (url.searchParams.get("token") ?? "").split(".");
@@ -122,6 +133,24 @@ describe("T3ChatAccounts", () => {
       expect(error._tag).toBe("T3ChatRequestFailed");
     }).pipe(provide(fakeT3Chat({ error: "nope" }, 401).client)),
   );
+
+  it.effect("times out when T3 Chat stalls while sending the body", () => {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(new ReadableStream({ start: () => {} }), { status: 200 }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const accounts = yield* T3ChatAccounts.T3ChatAccounts;
+      const fiber = yield* Effect.forkChild(Effect.flip(accounts.getLink({ userId: "user_1" })));
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(fiber);
+      expect(error._tag).toBe("T3ChatRequestFailed");
+    }).pipe(provide(client));
+  });
 
   it.effect("reports itself unavailable without a shared secret", () =>
     Effect.gen(function* () {

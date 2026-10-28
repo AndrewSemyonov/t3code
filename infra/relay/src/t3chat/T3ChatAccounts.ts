@@ -1,3 +1,4 @@
+import { createClerkClient } from "@clerk/backend";
 import { hmac } from "@noble/hashes/hmac";
 import { sha256 } from "@noble/hashes/sha2";
 import * as Context from "effect/Context";
@@ -17,7 +18,9 @@ import * as RelayConfiguration from "../Config.ts";
 const LINK_TOKEN_TTL_SECONDS = 10 * 60;
 const T3CHAT_REQUEST_TIMEOUT = "5 seconds";
 
-const T3ChatLinkResponse = Schema.Struct({ link: Schema.NullOr(RelayT3ChatLink) });
+const decodeLinkResponse = Schema.decodeUnknownEffect(
+  Schema.Struct({ link: Schema.NullOr(RelayT3ChatLink) }),
+);
 
 export class T3ChatNotConfigured extends Schema.TaggedError<T3ChatNotConfigured>()(
   "T3ChatNotConfigured",
@@ -25,6 +28,15 @@ export class T3ChatNotConfigured extends Schema.TaggedError<T3ChatNotConfigured>
 ) {
   override get message(): string {
     return "T3 Chat linking is not configured on this relay";
+  }
+}
+
+export class ClerkUserLookupFailed extends Schema.TaggedError<ClerkUserLookupFailed>()(
+  "ClerkUserLookupFailed",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the Clerk user's primary email";
   }
 }
 
@@ -50,8 +62,7 @@ export class T3ChatAccounts extends Context.Service<
     readonly available: boolean;
     readonly createLinkUrl: (input: {
       readonly userId: string;
-      readonly email: string;
-    }) => Effect.Effect<string, T3ChatNotConfigured>;
+    }) => Effect.Effect<string, T3ChatNotConfigured | ClerkUserLookupFailed>;
     readonly getLink: (input: {
       readonly userId: string;
     }) => Effect.Effect<RelayT3ChatLink | null, T3ChatNotConfigured | T3ChatRequestFailed>;
@@ -84,6 +95,7 @@ export const make = Effect.gen(function* () {
     ? Effect.succeed(settings)
     : Effect.fail(new T3ChatNotConfigured());
 
+  // The timeout covers the body read so a stalled response still fails fast.
   const post = Effect.fn("relay.t3chat.post")(function* (
     operation: T3ChatRequestFailed["operation"],
     path: string,
@@ -95,19 +107,38 @@ export const make = Effect.gen(function* () {
       HttpClientRequest.bodyJsonUnsafe({ clerkUserId: userId }),
       client.execute,
       Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
       Effect.timeout(T3CHAT_REQUEST_TIMEOUT),
       Effect.mapError((cause) => new T3ChatRequestFailed({ operation, cause })),
     );
+  });
+
+  const lookupClerkPrimaryEmail = Effect.fn("relay.t3chat.lookup_clerk_primary_email")(function* (
+    userId: string,
+  ) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const user = await createClerkClient({
+          secretKey: Redacted.value(config.clerkSecretKey),
+          publishableKey: config.clerkPublishableKey,
+        }).users.getUser(userId);
+        const email = user.primaryEmailAddress?.emailAddress;
+        if (!email) throw new Error("Clerk user has no primary email address.");
+        return email;
+      },
+      catch: (cause) => new ClerkUserLookupFailed({ cause }),
+    });
   });
 
   return T3ChatAccounts.of({
     available: settings !== undefined,
     createLinkUrl: Effect.fn("relay.t3chat.create_link_url")(function* (input) {
       const { baseUrl, linkSecret } = yield* requireSettings;
+      const email = yield* lookupClerkPrimaryEmail(input.userId);
       const now = yield* DateTime.now;
       const token = signLinkToken(Redacted.value(linkSecret), {
         sub: input.userId,
-        email: input.email,
+        email,
         exp: Math.floor(now.epochMilliseconds / 1_000) + LINK_TOKEN_TTL_SECONDS,
       });
       const url = new URL("/link/t3code", baseUrl);
@@ -115,11 +146,11 @@ export const make = Effect.gen(function* () {
       return url.toString();
     }),
     getLink: Effect.fn("relay.t3chat.get_link")(function* (input) {
-      const response = yield* post("get-link", "/api/t3code/link", input.userId);
-      const body = yield* HttpClientResponse.schemaBodyJson(T3ChatLinkResponse)(response).pipe(
+      const body = yield* post("get-link", "/api/t3code/link", input.userId);
+      const decoded = yield* decodeLinkResponse(body).pipe(
         Effect.mapError((cause) => new T3ChatRequestFailed({ operation: "get-link", cause })),
       );
-      return body.link;
+      return decoded.link;
     }),
     unlink: Effect.fn("relay.t3chat.unlink")(function* (input) {
       yield* post("unlink", "/api/t3code/unlink", input.userId);
