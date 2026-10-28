@@ -995,6 +995,7 @@ export const layerClientApi = HttpApiBuilder.group(
       .handle(
         "getT3ChatLink",
         Effect.fn("relay.api.client.getT3ChatLink")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
           if (!t3Chat.available) return { available: false, link: null };
           const { userId } = yield* RelayClientPrincipal;
           const link = yield* t3Chat

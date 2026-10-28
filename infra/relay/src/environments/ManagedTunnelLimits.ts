@@ -18,7 +18,7 @@ const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 export class ManagedTunnelLimitPersistenceError extends Schema.TaggedError<ManagedTunnelLimitPersistenceError>()(
   "ManagedTunnelLimitPersistenceError",
   {
-    operation: Schema.Literals(["load-limit", "count-tunnels"]),
+    operation: Schema.Literals(["load-limit", "count-tunnels", "load-allocation"]),
     userId: Schema.String,
     cause: Schema.Defect(),
   },
@@ -118,10 +118,33 @@ const make = Effect.gen(function* () {
       const activeTunnels = counted[0]?.activeTunnels ?? 0;
       if (activeTunnels < baseMaxTunnels) return;
 
+      // Allocations survive tunnel release, so a restart of an admitted environment
+      // passes without asking T3 Chat. A downgrade only blocks new environments.
+      const existing = yield* db
+        .select({ environmentId: relayManagedEndpointAllocations.environmentId })
+        .from(relayManagedEndpointAllocations)
+        .where(
+          and(
+            eq(relayManagedEndpointAllocations.userId, input.userId),
+            eq(relayManagedEndpointAllocations.environmentId, input.environmentId),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedTunnelLimitPersistenceError({
+                operation: "load-allocation",
+                userId: input.userId,
+                cause,
+              }),
+          ),
+        );
+      if (existing.length > 0) return;
+
+      // A manual override is the exact cap; Premier raises only the default.
       const maxTunnels =
-        t3Chat.available &&
-        baseMaxTunnels < T3CHAT_PREMIER_TUNNEL_LIMIT &&
-        (yield* hasT3ChatPremier(input.userId))
+        t3Chat.available && overrides.length === 0 && (yield* hasT3ChatPremier(input.userId))
           ? T3CHAT_PREMIER_TUNNEL_LIMIT
           : baseMaxTunnels;
       if (activeTunnels >= maxTunnels) {

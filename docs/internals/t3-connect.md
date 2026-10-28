@@ -139,8 +139,10 @@ rather than by a shared identity. The relay and T3 Chat share one secret
 short-lived token naming the Clerk user and email; the user confirms it while
 signed in to T3 Chat, and T3 Chat stores the link. T3 Chat owns the link and the
 plan, so the relay keeps no copy. It asks T3 Chat only when an account reaches
-its normal cap, and any failure keeps the normal cap. Downgrading does not
-remove tunnels that already exist
+its normal cap for a new environment, and any failure keeps the normal cap.
+An environment that already holds an allocation restarts without asking, so a
+downgrade or a T3 Chat outage only blocks new environments. A manual override
+row stays the exact cap
 ([limits](../../infra/relay/src/environments/ManagedTunnelLimits.ts)).
 
 ## The relay client follows the server's pin

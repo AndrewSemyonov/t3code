@@ -8,7 +8,11 @@ import { relayManagedTunnelLimits } from "../persistence/schema.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
-const makeFakeDb = (input: { readonly override?: number; readonly activeTunnels: number }) =>
+const makeFakeDb = (input: {
+  readonly override?: number;
+  readonly activeTunnels: number;
+  readonly existingAllocation?: boolean;
+}) =>
   ({
     select: () => ({
       from: (table: unknown) =>
@@ -25,6 +29,10 @@ const makeFakeDb = (input: { readonly override?: number; readonly activeTunnels:
               innerJoin: () => ({
                 where: () => Effect.succeed([{ activeTunnels: input.activeTunnels }]),
               }),
+              where: () => ({
+                limit: () =>
+                  Effect.succeed(input.existingAllocation ? [{ environmentId: "env-new" }] : []),
+              }),
             },
     }),
   }) as unknown as RelayDb.RelayDb["Service"];
@@ -32,6 +40,7 @@ const makeFakeDb = (input: { readonly override?: number; readonly activeTunnels:
 const ensureCapacity = (input: {
   readonly override?: number;
   readonly activeTunnels: number;
+  readonly existingAllocation?: boolean;
   readonly plan: RelayT3ChatPlan | "lookup-fails";
   readonly lookups?: Array<string>;
 }) =>
@@ -89,13 +98,28 @@ describe("ManagedTunnelLimits", () => {
     }),
   );
 
-  it.effect("leaves larger manual overrides alone", () =>
+  it.effect("treats a manual override as the exact cap", () =>
     Effect.gen(function* () {
       const lookups: Array<string> = [];
-      const error = yield* Effect.flip(
-        ensureCapacity({ override: 200, activeTunnels: 200, plan: "premier", lookups }),
-      );
-      expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: 200 });
+      for (const override of [1, 200]) {
+        const error = yield* Effect.flip(
+          ensureCapacity({ override, activeTunnels: override, plan: "premier", lookups }),
+        );
+        expect(error).toMatchObject({ _tag: "ManagedTunnelLimitExceeded", maxTunnels: override });
+      }
+      expect(lookups).toEqual([]);
+    }),
+  );
+
+  it.effect("lets an admitted environment restart without asking T3 Chat", () =>
+    Effect.gen(function* () {
+      const lookups: Array<string> = [];
+      yield* ensureCapacity({
+        activeTunnels: 10,
+        plan: "lookup-fails",
+        existingAllocation: true,
+        lookups,
+      });
       expect(lookups).toEqual([]);
     }),
   );
