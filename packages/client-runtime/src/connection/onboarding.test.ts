@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -59,6 +60,7 @@ function layerPairingHttp(
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
+    readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
   },
 ) {
   const grantScopes = options?.grantScopes ?? AuthStandardClientScopes;
@@ -122,15 +124,17 @@ function layerPairingHttp(
           ),
         );
       }
-      return Promise.resolve(
-        Response.json({
-          access_token: "bearer-token",
-          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-          token_type: "Bearer",
-          expires_in: 3600,
-          scope: sessionScopes.join(" "),
-        }),
-      );
+      const granted = Response.json({
+        access_token: "bearer-token",
+        issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: sessionScopes.join(" "),
+      });
+      const gate = options?.exchangeGate;
+      if (gate === undefined) return Promise.resolve(granted);
+      gate.reached();
+      return gate.release.then(() => granted);
     }
 
     if (url.endsWith("/api/auth/session")) {
@@ -318,6 +322,34 @@ describe("connection onboarding", () => {
         "https://attacker.example.test/.well-known/t3/environment",
       ]);
     }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+  });
+
+  it.effect("refuses a new address when the environment is saved during the exchange", () => {
+    let reached!: () => void;
+    let release!: () => void;
+    const exchangeReached = new Promise<void>((resolve) => (reached = resolve));
+    const exchangeGate = {
+      reached: () => reached(),
+      release: new Promise<void>((resolve) => (release = resolve)),
+    };
+    return Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const pairing = yield* onboarding
+        .registerPairing({ host: "attacker.example.test", pairingCode: "pairing-token" })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => exchangeReached);
+      const before = yield* registerSwitchedOffEnvironment;
+      release();
+
+      const outcome = yield* Fiber.join(pairing);
+
+      expect(outcome).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+      });
+      expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
+    }).pipe(Effect.provide(layerPairingOnboarding({ exchangeGate })));
   });
 
   it.effect("adds a new address as a route when pairing targets that environment", () =>

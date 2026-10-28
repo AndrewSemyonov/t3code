@@ -128,6 +128,7 @@ export const preparePairingRegistration = Effect.fn(
       wsBaseUrl: target.wsBaseUrl,
     }),
   };
+  // The registry checks again under its lease; this early check keeps a refused code unspent.
   if (input.expectedEnvironmentId === undefined) {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     yield* registry.assertKnownAddress({ ...route, profile: Option.some(route.profile) });
@@ -156,7 +157,10 @@ const registerPairingConnection = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  if (!(yield* registry.register(registration))) return registration.target.environmentId;
+  const knownAddressOnly = input.expectedEnvironmentId === undefined;
+  if (!(yield* registry.register(registration, { knownAddressOnly }))) {
+    return registration.target.environmentId;
+  }
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)
