@@ -187,6 +187,44 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("memory windows keep deferred candidates after compaction", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("deferred-window");
+    const projection = yield* store.getThreadProjection(threadId);
+    const run = projection.runs[0]!;
+    const item = projection.turnItems[0]!;
+    yield* store.apply({
+      id: EventId.make("event:deferred-window:completed"),
+      type: "run.updated",
+      threadId,
+      occurredAt: projection.updatedAt,
+      payload: { ...run, status: "completed", completedAt: projection.updatedAt },
+    });
+    for (let ordinal = 1; ordinal <= 80; ordinal += 1) {
+      yield* store.apply({
+        id: EventId.make(`event:deferred-window:${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: projection.updatedAt,
+        payload: {
+          ...item,
+          id: ordinal === 1 ? item.id : TurnItemId.make(`item:deferred-window:${ordinal}`),
+          ordinal,
+          status: "completed",
+        },
+      });
+    }
+    const snapshot = yield* store.getThreadSnapshotWindow(threadId, {
+      rowLimit: 77,
+      userTurnLimit: 10,
+      deferWork: true,
+    });
+    assert.lengthOf(snapshot.projection.visibleTurnItems, 1);
+    assert.strictEqual(snapshot.projection.visibleTurnItems[0]?.item.deferredWork?.itemCount, 80);
+  }).pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],
   ["SQL", layerTest],
@@ -1924,33 +1962,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           payload_json = json_set(payload_json, '$.runId', 'run:bounded-sql-history:1')
         WHERE thread_id = ${threadId}
       `;
-      const longTurnSnapshot = yield* humanWindow();
-      assert.lengthOf(longTurnSnapshot.projection.visibleTurnItems, sqlPageLimit);
-      const longTurnPage = buildBoundedThreadProjection({
-        ...longTurnSnapshot,
-      });
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET ordinal = 1000,
+        payload_json = json_set(payload_json, '$.ordinal', 1000)
+        WHERE thread_id = ${threadId} AND ordinal = 999`;
       const promptId = TurnItemId.make("turn-item:bounded-sql-history:1");
-      assert.strictEqual(longTurnPage.projection.visibleTurnItems[0]?.sourceItemId, promptId);
-      const longTurnIds = new Set(
-        longTurnPage.projection.visibleTurnItems.map((row) => row.sourceItemId),
-      );
-      let longTurnCursor = longTurnPage.historyCursor;
-      for (let pages = 0; longTurnCursor !== null; pages += 1) {
-        assert.isBelow(pages, 20);
-        assert.notStrictEqual(decodeThreadHistoryCursor(longTurnCursor).si, promptId);
-        const page = yield* projectionStore.getThreadHistoryPage(threadId, longTurnCursor);
-        assert.strictEqual(page.items[0]?.sourceItemId, promptId);
-        for (const row of page.items) longTurnIds.add(row.sourceItemId);
-        longTurnCursor = page.nextCursor;
-      }
-      assert.strictEqual(longTurnIds.size, 1_000);
-      const conversation = yield* projectionStore.getThreadHistoryPage(
-        threadId,
-        longTurnPage.historyCursor!,
-        undefined,
-        true,
-      );
-      assert.strictEqual(conversation.items[0]?.sourceItemId, promptId);
       const deferred = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: sqlPageLimit,
         userTurnLimit: 10,
@@ -1976,6 +1991,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET ordinal = 999,
+        payload_json = json_set(payload_json, '$.ordinal', 999)
+        WHERE turn_item_id = 'turn-item:bounded-sql-history:999'`;
       yield* sql`
         UPDATE orchestration_v2_projection_turn_items
         SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')

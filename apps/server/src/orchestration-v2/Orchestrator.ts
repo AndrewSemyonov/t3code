@@ -385,7 +385,6 @@ export interface OrchestratorV2Shape {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
       readonly projection: OrchestrationV2ThreadProjection;
-      readonly historyContextItems?: OrchestrationV2ThreadProjection["visibleTurnItems"];
     },
     OrchestratorV2Error
   >;

@@ -5,10 +5,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import {
-  DEFERRED_WORK_ITEM_LIMIT,
-  isDeferrableWorkItem,
-} from "@t3tools/shared/orchestrationV2WorkHistory";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
 /**
  * Every window stops at the byte budget. A window that holds a user turn also
@@ -182,7 +179,41 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   );
 }
 
-export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArray<Row>): Row[] {
+const DEFERRED_WORK_ITEM_TYPES = [
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+] as const;
+
+function isDeferrableWorkItem(
+  item: Pick<OrchestrationV2TurnItem, "type" | "status"> & {
+    readonly persistentOutput?: boolean;
+    readonly toolName?: string | null;
+    readonly output?: unknown;
+    readonly viewedImagePath?: string;
+  },
+): boolean {
+  if (item.status !== "completed" || item.persistentOutput === true) return false;
+  if (item.type === "dynamic_tool") {
+    const tool = { toolName: item.toolName, output: item.output };
+    if (
+      item.viewedImagePath !== undefined ||
+      htmlRenderFromToolItem(tool) !== undefined ||
+      mcpAppFromToolItem(tool) !== undefined
+    )
+      return false;
+  }
+  return DEFERRED_WORK_ITEM_TYPES.some((type) => type === item.type);
+}
+
+export function deferWorkHistoryRows<Row extends HistoryRow>(
+  items: ReadonlyArray<Row>,
+  runs: ReadonlyArray<{ readonly id: string; readonly status: string }> = [],
+): Row[] {
+  const statuses = new Map(runs.map((run) => [run.id, run.status]));
   const blocked = new Set(
     items.flatMap(({ item }) =>
       item.runId != null &&
@@ -200,7 +231,7 @@ export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArra
     if (item.runId == null) continue;
     if (item.type === "user_message") segments.set(item.runId, (segments.get(item.runId) ?? 0) + 1);
     if (
-      item.runStatus !== "completed" ||
+      (item.runStatus ?? statuses.get(item.runId)) !== "completed" ||
       blocked.has(item.runId) ||
       !isDeferrableWorkItem({ ...item, status: item.status ?? "idle" })
     )
@@ -213,7 +244,7 @@ export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArra
   const omitted = new Set<Row>();
   const anchors = new Map<Row, Row>();
   for (const group of groups.values()) {
-    if (group.length <= DEFERRED_WORK_ITEM_LIMIT) continue;
+    if (group.length <= THREAD_HISTORY_PAGE_POLICY.maxItems) continue;
     const first = group[0]!;
     const last = group.at(-1)!;
     for (const row of group.slice(1)) omitted.add(row);
@@ -264,7 +295,7 @@ export function selectDeferredWorkPage<Row extends HistoryRow>(input: {
     snapshotSequence: input.snapshotSequence,
     rowEncodedBytes: input.rowEncodedBytes,
     policy: {
-      maxItems: DEFERRED_WORK_ITEM_LIMIT,
+      maxItems: THREAD_HISTORY_PAGE_POLICY.maxItems,
       maxEncodedBytes: THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
     },
   });
@@ -476,22 +507,6 @@ export function missingInterruptRequests<Row extends HistoryRow>(
   );
 }
 
-/** A window can start inside a long run, but its work still needs the user's prompt. */
-export function missingUserTurnStarts<Row extends HistoryRow>(
-  items: ReadonlyArray<Row>,
-  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId">>,
-): Row[] {
-  const runs = new Set(page.flatMap((row) => (row.item.runId == null ? [] : [row.item.runId])));
-  for (const row of page) {
-    if (isThreadHistoryUserTurn(row.item) && row.item.runId != null) runs.delete(row.item.runId);
-  }
-  if (runs.size === 0) return [];
-  return items.filter(
-    (row) =>
-      isThreadHistoryUserTurn(row.item) && row.item.runId != null && runs.has(row.item.runId),
-  );
-}
-
 function isLocalProjectedRow(
   projection: OrchestrationV2ThreadProjection,
   row: OrchestrationV2ProjectedTurnItem,
@@ -602,7 +617,6 @@ export function buildBoundedThreadProjection(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly snapshotSequence: number;
   readonly policy?: ThreadHistoryPagePolicy | undefined;
-  readonly historyContextItems?: OrchestrationV2ThreadProjection["visibleTurnItems"] | undefined;
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
@@ -639,14 +653,6 @@ export function buildBoundedThreadProjection(input: {
         reserve += bytesOfJson(item);
       }
     }
-    for (const row of [
-      ...(input.historyContextItems ?? []),
-      ...controlProjection.visibleTurnItems,
-    ]) {
-      if (isThreadHistoryUserTurn(row.item)) {
-        reserve += projectedRowBoundedSnapshotEncodedBytes(row, threadId);
-      }
-    }
     return reserve;
   })();
   const controlBytes = bytesOfJson({
@@ -669,13 +675,7 @@ export function buildBoundedThreadProjection(input: {
     policy: windowPolicy,
     rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
   });
-  const visibleTurnItems = renumberPositions([
-    ...missingUserTurnStarts(
-      [...(input.historyContextItems ?? []), ...controlProjection.visibleTurnItems],
-      window.items,
-    ),
-    ...window.items,
-  ]);
+  const visibleTurnItems = renumberPositions(window.items);
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,

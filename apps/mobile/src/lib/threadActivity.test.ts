@@ -354,35 +354,6 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
-  it("keeps deferred work attached to its collapsed run and drops the cursor after loading", () => {
-    const work = {
-      ...command(),
-      deferredWork: { cursor: "work", itemCount: 100, lastOrdinal: 100 },
-    };
-    const rows = [
-      projected(userMessage(), 0),
-      projected(work, 1),
-      projected(assistantMessage(), 2),
-    ];
-    const cache = createThreadFeedCache();
-    const presented = deriveThreadFeedPresentation(
-      buildThreadFeed(rows, { cache }),
-      null,
-      new Set(),
-    );
-    expect(presented.map((entry) => entry.type)).toEqual(["message", "run-fold", "message"]);
-    expect(presented[1]).toMatchObject({ deferredWorkItemIds: [work.id], expanded: false });
-    const loaded = deriveThreadFeedPresentation(
-      buildThreadFeed([rows[0]!, projected(command(), 1), rows[2]!], { cache }),
-      null,
-      new Set([runId]),
-    );
-    expect(loaded.find((entry) => entry.type === "run-fold")).toMatchObject({ expanded: true });
-    expect(loaded.find((entry) => entry.type === "run-fold")).not.toHaveProperty(
-      "deferredWorkItemIds",
-    );
-  });
-
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

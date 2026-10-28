@@ -100,6 +100,7 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
   readonly throughEntryId?: string;
+  readonly workAnchorId?: string;
 };
 
 export type {
@@ -164,19 +165,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       supervisor.target.environmentId,
       input.threadId,
       input.throughEntryId,
-    );
-  });
-  const loadWorkHistory = Effect.fn("ThreadCommands.loadWorkHistory")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly anchorId: string;
-  }) {
-    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-    const controller = yield* Effect.serviceOption(ThreadHistoryController.ThreadHistoryController);
-    if (Option.isNone(controller)) return { _tag: "noop" } as const;
-    return yield* controller.value.loadWork(
-      supervisor.target.environmentId,
-      input.threadId,
-      input.anchorId,
+      input.workAnchorId,
     );
   });
 
@@ -439,16 +428,6 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "serial",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
-      },
-    }),
-    loadWorkHistory: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:thread:load-work-history",
-      execute: loadWorkHistory,
-      scheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.threadId, input.anchorId]),
       },
     }),
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

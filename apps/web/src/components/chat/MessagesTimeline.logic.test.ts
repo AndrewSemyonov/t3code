@@ -36,47 +36,6 @@ import {
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
-  it("carries deferred work through a settled turn fold without exposing it before expansion", () => {
-    const fixture = makeStreamingTimelineFixture("Done");
-    const visibleTurnItems = fixture.visibleTurnItems
-      .filter((row) => row.item.runId === fixture.runId)
-      .map((row) => ({
-        ...row,
-        item:
-          row.item.type === "assistant_message"
-            ? { ...row.item, status: "completed" as const, streaming: false }
-            : row.item.type === "dynamic_tool"
-              ? {
-                  ...row.item,
-                  deferredWork: {
-                    cursor: "work",
-                    itemCount: 100,
-                    lastOrdinal: row.item.ordinal,
-                  },
-                }
-              : row.item,
-      }));
-    const input = {
-      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems,
-        optimisticMessages: [],
-      }),
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    };
-    const collapsed = deriveMessagesTimelineRows(input);
-    const fold = collapsed.find((row) => row.kind === "turn-fold");
-    expect(fold).toMatchObject({ expanded: false, deferredWorkItemIds: ["live-work"] });
-    expect(collapsed.some((row) => row.kind === "work")).toBe(false);
-    const expanded = deriveMessagesTimelineRows({
-      ...input,
-      expandedRunIds: new Set([fixture.runId]),
-    });
-    expect(expanded.some((row) => row.kind === "work")).toBe(true);
-  });
-
   it("uses the previous completed assistant updatedAt for subsequent assistant responses", () => {
     const result = computeMessageDurationStart([
       {

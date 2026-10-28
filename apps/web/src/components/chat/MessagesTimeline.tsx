@@ -34,7 +34,6 @@ import {
   useContext,
   useLayoutEffect,
   useEffect,
-  useEffectEvent,
   useRef,
   useState,
   type ReactNode,
@@ -1462,7 +1461,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
         </WorkLogBlock>
       ) : null}
-      {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
@@ -1556,45 +1555,42 @@ function ContextCompactionTimelineRow({
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
-  const loadWork = useAtomCommand(threadEnvironment.loadWorkHistory, { reportFailure: false });
+  const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
   const ref = parseScopedThreadKey(ctx.routeThreadKey);
   const environmentId = ref?.environmentId;
   const threadId = ref?.threadId;
   const anchorsKey = row.deferredWorkItemIds?.join("\n") ?? "";
-  const [failure, setFailure] = useState<{ attempt: number; message: string } | null>(null);
-  const [retry, setRetry] = useState(0);
-  const error = anchorsKey && failure?.attempt === retry ? failure.message : null;
-  const loading = row.expanded && anchorsKey !== "" && error === null;
-  const requestWork = useEffectEvent(
-    (anchorIds: string[], environmentId: EnvironmentId, threadId: ThreadId) =>
-      Promise.all(
-        anchorIds.map((anchorId) => loadWork({ environmentId, input: { threadId, anchorId } })),
-      ),
-  );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Expanded folds restore their deferred server history.
+  const [failed, setFailed] = useState(false);
+  const load = () => {
+    if (!anchorsKey || environmentId === undefined || threadId === undefined)
+      return Promise.resolve([]);
+    return Promise.all(
+      anchorsKey
+        .split("\n")
+        .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
+    );
+  };
+  // oxlint-disable-next-line t3code/react-effect-budget -- Restored expanded folds also need their server history.
   useEffect(() => {
-    if (!row.expanded || !anchorsKey || environmentId === undefined || threadId === undefined)
-      return;
-    let active = true;
-    void requestWork(anchorsKey.split("\n"), environmentId, threadId).then((results) => {
-      if (!active) return;
-      const failed = results.some(
-        (result) => result._tag === "Failure" || result.value._tag === "error",
+    if (row.expanded)
+      void load().then((results) =>
+        setFailed(
+          results.some((result) => result._tag === "Failure" || result.value._tag === "error"),
+        ),
       );
-      setFailure(
-        failed ? { attempt: retry, message: "Couldn't load work. Click to retry." } : null,
-      );
-    });
-    return () => {
-      active = false;
-    };
-  }, [row.expanded, anchorsKey, retry, environmentId, threadId]);
+  }, [row.expanded, load]);
+  const error = anchorsKey && failed ? "Couldn't load work. Click to retry." : null;
+  const loading = row.expanded && anchorsKey !== "" && !failed;
   const toggle = () => {
-    if (error !== null && row.expanded) {
-      setFailure(null);
-      setRetry((value) => value + 1);
+    if (error && row.expanded) {
+      setFailed(false);
+      void load().then((results) =>
+        setFailed(
+          results.some((result) => result._tag === "Failure" || result.value._tag === "error"),
+        ),
+      );
     } else {
-      setFailure(null);
+      setFailed(false);
       ctx.onToggleTurnFold(row.runId);
     }
   };

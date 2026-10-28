@@ -1,8 +1,6 @@
 import {
   EventId,
-  MessageId,
   OrchestrationV2ThreadStreamItem,
-  RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -163,47 +161,6 @@ describe("decideThreadResume", () => {
     expect(snapshot.historyCursor).not.toBeNull();
     expect(snapshot.hasMoreHistory).toBe(true);
     expect(snapshot.latestLocalTurnOrdinal).toBe(80);
-  });
-
-  it("includes an out-of-window user prompt in ordinary and compact socket snapshots", () => {
-    const runId = RunId.make("long-run");
-    const full = timelineProjection(80);
-    const rows = full.visibleTurnItems.map((row) => ({
-      ...row,
-      item: { ...row.item, runId },
-    }));
-    const first = rows[0]!;
-    if (first.item.type !== "command_execution") throw new Error("Expected command fixture");
-    const prompt: OrchestrationV2ProjectedTurnItem = {
-      ...first,
-      sourceItemId: TurnItemId.make("prompt-item"),
-      item: {
-        ...first.item,
-        id: TurnItemId.make("prompt-item"),
-        ordinal: 0,
-        type: "user_message",
-        messageId: MessageId.make("prompt"),
-        createdBy: "user",
-        creationSource: "web",
-        inputIntent: "turn_start",
-        text: "Investigate WebGL",
-        attachments: [],
-      },
-    };
-    for (const compactTurnItems of [false, true]) {
-      const snapshot = buildBoundedThreadStreamSnapshot({
-        snapshotSequence: 44,
-        projection: { ...full, visibleTurnItems: rows, turnItems: rows.map((row) => row.item) },
-        historyContextItems: [prompt],
-        compactTurnItems,
-      });
-      const restored = boundedSnapshotProjection(snapshot);
-      expect(restored.visibleTurnItems[0]?.item).toEqual(prompt.item);
-      expect(restored.turnItems[0]).toEqual(prompt.item);
-      expect(restored.visibleTurnItems).toHaveLength(76);
-      expect(snapshot.hasMoreHistory).toBe(true);
-      if (compactTurnItems) expect(snapshot.turnItemsOmitLocalVisible).toBe(true);
-    }
   });
 
   it("rejects a 10 MiB raw replay even when its projected form fits the wire budget", () => {

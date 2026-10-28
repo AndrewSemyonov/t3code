@@ -1247,42 +1247,42 @@ function RunFoldButton({
   rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   iconColor: ColorValue;
 }) {
-  const loadWork = useAtomCommand(threadEnvironment.loadWorkHistory, { reportFailure: false });
+  const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
   const anchorsKey = entry.deferredWorkItemIds?.join("\n") ?? "";
-  const [failure, setFailure] = useState<{ attempt: number; message: string } | null>(null);
-  const [retry, setRetry] = useState(0);
-  const error = anchorsKey && failure?.attempt === retry ? failure.message : null;
-  const loading = entry.expanded && anchorsKey !== "" && error === null;
-  const requestWork = useEffectEvent(
-    (anchorIds: string[], environmentId: EnvironmentId, threadId: ThreadId) =>
-      Promise.all(
-        anchorIds.map((anchorId) => loadWork({ environmentId, input: { threadId, anchorId } })),
-      ),
-  );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Expanded folds restore their deferred server history.
+  const [failed, setFailed] = useState(false);
+  const load = () => {
+    if (!anchorsKey) return Promise.resolve([]);
+    return Promise.all(
+      anchorsKey
+        .split("\n")
+        .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
+    );
+  };
+  // oxlint-disable-next-line t3code/react-effect-budget -- Restored expanded folds also need their server history.
   useEffect(() => {
-    if (!entry.expanded || !anchorsKey) return;
-    let active = true;
-    void requestWork(anchorsKey.split("\n"), environmentId, threadId).then((results) => {
-      if (!active) return;
-      const failed = results.some(
-        (result) => result._tag === "Failure" || result.value._tag === "error",
+    if (entry.expanded)
+      void load().then((results) =>
+        setFailed(
+          results.some((result) => result._tag === "Failure" || result.value._tag === "error"),
+        ),
       );
-      setFailure(failed ? { attempt: retry, message: "Couldn't load work. Tap to retry." } : null);
-    });
-    return () => {
-      active = false;
-    };
-  }, [entry.expanded, anchorsKey, retry, environmentId, threadId]);
+  }, [entry.expanded, load]);
+  const error = anchorsKey && failed ? "Couldn't load work. Tap to retry." : null;
+  const loading = entry.expanded && anchorsKey !== "" && !failed;
   const toggle = () => {
-    if (error !== null && entry.expanded) {
-      setFailure(null);
-      setRetry((value) => value + 1);
+    if (error && entry.expanded) {
+      setFailed(false);
+      void load().then((results) =>
+        setFailed(
+          results.some((result) => result._tag === "Failure" || result.value._tag === "error"),
+        ),
+      );
     } else {
-      setFailure(null);
+      setFailed(false);
       onToggle(entry.runId);
     }
   };
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -1382,6 +1382,7 @@ function renderFeedEntry(
     return (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
         <RunFoldButton
+          key={entry.id}
           entry={entry}
           environmentId={props.environmentId}
           threadId={props.threadId}

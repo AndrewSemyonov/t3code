@@ -94,7 +94,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { DEFERRED_WORK_ITEM_LIMIT } from "@t3tools/shared/orchestrationV2WorkHistory";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
@@ -102,12 +101,10 @@ import {
   threadHistoryTurnStarts,
   THREAD_HISTORY_MAX_RAW_TURNS,
   missingInterruptRequests,
-  missingUserTurnStarts,
   deferWorkHistoryRows,
   selectDeferredWorkPage,
   encodeThreadHistoryCursor,
   decodeThreadHistoryCursor,
-  projectedRowEncodedBytes,
   olderHistoryPagePolicy,
   selectHistoryPageFromCursor,
   selectRecentTimelineWindow,
@@ -651,7 +648,6 @@ export interface ProjectionStoreV2Shape {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
       readonly projection: OrchestrationV2ThreadProjection;
-      readonly historyContextItems?: OrchestrationV2ThreadProjection["visibleTurnItems"];
     },
     ProjectionStoreV2Error
   >;
@@ -2900,7 +2896,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     // Share selection so counting discarded ancestry preserves payload-read positions.
-    const retainedWindowRows = (
+    const retainedWindowRows = Effect.fn("ProjectionStore.retainedWindowRows")(function* (
       threadId: ThreadId,
       window: {
         readonly rowLimit: number;
@@ -2909,7 +2905,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly anchorItemId?: TurnItemId | undefined;
         readonly requiredRunId?: RunId | undefined;
       },
-    ) => sql`
+    ) {
+      const eligible = sql`
                 WITH eligible AS NOT MATERIALIZED (
                   SELECT item.rowid AS item_rowid, item.payload_json, item.ordinal, item.turn_item_id,
                     item.run_id, item.node_id, item.type, item.status, run.status AS run_status
@@ -2974,7 +2971,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           AND request.type = 'run_interrupt_request'
                       )
                     )
-                ), run_starts AS (
+                )`;
+      // Resolve anchors separately: repeated CTE expansion exceeds SQLite's subquery limit.
+      const anchors = yield* sql<{ readonly ordinal: number; readonly latest: number | null }>`
+                ${eligible}, run_starts AS (
                   -- A wake (PR watch, task completion) starts its run with a
                   -- notification instead of a user message. Read the first
                   -- input of each run, newest run first, and add the
@@ -3038,7 +3038,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ELSE 0
                   END AS ordinal
                   FROM user_anchors
-                ), work_segments AS (
+                )
+                SELECT ordinal, (SELECT MAX(ordinal) FROM user_anchors) AS latest FROM boundary
+              `;
+      const boundary = anchors[0]!;
+      return sql`
+                ${eligible}, work_segments AS (
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type,
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
@@ -3055,17 +3060,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ) THEN 1 ELSE 0 END AS can_defer
                   FROM eligible
                   WHERE ${window.deferWork ? 1 : 0} = 1
-                    AND EXISTS (SELECT 1 FROM user_anchors)
-                    AND ordinal >= (SELECT ordinal FROM boundary)
+                    AND ${boundary.latest === null ? 0 : 1} = 1
+                    AND ordinal >= ${boundary.ordinal}
                 ), deferred_work AS (
                   SELECT run_id, segment, MIN(ordinal) AS first_ordinal,
                     MAX(ordinal) AS last_ordinal, COUNT(*) AS item_count
                   FROM work_segments WHERE can_defer = 1
-                  GROUP BY run_id, segment HAVING COUNT(*) > ${DEFERRED_WORK_ITEM_LIMIT}
+                  GROUP BY run_id, segment HAVING COUNT(*) > ${THREAD_HISTORY_PAGE_POLICY.maxItems}
                 ), window_items AS NOT MATERIALIZED (
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type
                   FROM eligible WHERE ${window.deferWork ? 1 : 0} = 0
-                    OR NOT EXISTS (SELECT 1 FROM user_anchors)
+                    OR ${boundary.latest === null ? 1 : 0} = 1
                   UNION ALL
                   SELECT item.item_rowid, item.ordinal, item.turn_item_id, item.run_id, item.type
                   FROM work_segments item LEFT JOIN deferred_work deferred
@@ -3079,7 +3084,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM (
                     SELECT 1
                     FROM window_items
-                    WHERE ordinal >= (SELECT MAX(ordinal) FROM user_anchors)
+                    WHERE ordinal >= ${boundary.latest}
                     LIMIT ${THREAD_HISTORY_PAGE_POLICY.maxTurnItems + 1}
                   )
                 ), selected AS (
@@ -3088,7 +3093,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   -- carrying it through the union and sort cost about a second.
                   SELECT item_rowid, ordinal, turn_item_id, run_id, type
                   FROM window_items
-                  WHERE ordinal >= (SELECT ordinal FROM boundary)
+                  WHERE ordinal >= ${boundary.ordinal}
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
@@ -3121,6 +3126,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ORDER BY ordinal ASC, turn_item_id ASC
                 )
               `;
+    });
 
     const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
       function* (
@@ -3169,7 +3175,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
               : yield* sql<PayloadRow>`
-                ${retainedWindowRows(threadId, window)}
+                ${yield* retainedWindowRows(threadId, window)}
                 -- CROSS JOIN keeps the sorted IDs as the outer loop, so SQLite
                 -- skips sorting again once the payloads are attached. Carry the
                 -- rowid through selection to avoid a second string-key index lookup.
@@ -3181,7 +3187,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LEFT JOIN deferred_work deferred ON deferred.run_id = item.run_id
                   AND deferred.first_ordinal = item.ordinal
                 LEFT JOIN orchestration_v2_projection_turn_items tail
-                  ON tail.thread_id = item.thread_id AND tail.ordinal = deferred.last_ordinal
+                  ON tail.turn_item_id = (
+                    SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+                    WHERE thread_id = item.thread_id AND ordinal = deferred.last_ordinal
+                    ORDER BY turn_item_id DESC LIMIT 1
+                  )
                 ORDER BY retained.ordinal ASC, retained.turn_item_id ASC
               `;
         // Decode items once for cohort ids and projection; repeated parsing duplicates retained tool output.
@@ -3885,7 +3895,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             .length >= Math.max(window.userTurnLimit, THREAD_HISTORY_PAGE_POLICY.maxUserTurns)
         ) {
           const counted = yield* sql<{ readonly inherited_rows: number | null }>`
-            ${retainedWindowRows(forkedFrom.threadId, {
+            ${yield* retainedWindowRows(forkedFrom.threadId, {
               ...sourceWindow,
               rowLimit: sourceWindow.suppressLocal ? 0 : sourceWindow.rowLimit,
             })}
@@ -5698,7 +5708,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const policy =
               workMode === "work"
                 ? {
-                    maxItems: DEFERRED_WORK_ITEM_LIMIT,
+                    maxItems: THREAD_HISTORY_PAGE_POLICY.maxItems,
                     maxEncodedBytes: THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
                   }
                 : selection.policy;
@@ -5754,37 +5764,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ? page.items.filter((row) => isConversationHistoryItem(row.item))
                 : page.items,
             );
-            const prompts =
-              workMode === "work"
-                ? []
-                : [
-                    ...items.filter((row) => isThreadHistoryUserTurn(row.item)),
-                    ...(yield* materialize(missingUserTurnStarts(indexed, page.items))),
-                  ];
-            const promptBytes = prompts.reduce(
-              (sum, row) => sum + projectedRowEncodedBytes(row),
-              0,
-            );
-            const bounded = selectRecentTimelineWindow({
-              items,
-              snapshotSequence,
-              policy: {
-                ...policy,
-                maxEncodedBytes: Math.max(1, policy.maxEncodedBytes - promptBytes),
-              },
-            });
+            const bounded = selectRecentTimelineWindow({ items, snapshotSequence, policy });
             const requests =
               workMode === "work"
                 ? []
                 : yield* materialize(missingInterruptRequests(indexed, bounded.items));
-            const context = [
-              ...requests,
-              ...missingUserTurnStarts(
-                prompts,
-                bounded.items.length > 0 ? bounded.items : page.items,
-              ),
-            ].sort((left, right) => left.position - right.position);
-            const pageItems = [...context, ...bounded.items].map((row, position) => ({
+            const pageItems = [...requests, ...bounded.items].map((row, position) => ({
               ...row,
               position,
             }));
@@ -5895,44 +5880,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
-            const visible = projection.visibleTurnItems;
-            const runsWithoutPrompts = new Set(
-              visible.flatMap((row) => (row.item.runId === null ? [] : [row.item.runId])),
-            );
-            for (const row of visible) {
-              if (isThreadHistoryUserTurn(row.item) && row.item.runId !== null)
-                runsWithoutPrompts.delete(row.item.runId);
-            }
-            const promptRows =
-              runsWithoutPrompts.size === 0
-                ? []
-                : yield* sql<PayloadRow>`
-                SELECT prompt.payload_json
-                FROM json_each(${encodeIdList([...runsWithoutPrompts])}) wanted
-                CROSS JOIN orchestration_v2_projection_turn_items AS prompt ON prompt.rowid = (
-                  SELECT input.rowid
-                  FROM orchestration_v2_projection_turn_items AS input
-                  WHERE input.run_id = wanted.value
-                    AND input.type IN ('user_message', 'notification')
-                  ORDER BY input.ordinal
-                  LIMIT 1
-                )
-                JOIN orchestration_v2_projection_runs AS run ON run.run_id = prompt.run_id
-                WHERE prompt.type = 'user_message'
-                  AND json_extract(prompt.payload_json, '$.createdBy') = 'user'
-                  AND json_extract(prompt.payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
-                  AND run.status <> 'rolled_back'
-                  AND NOT (run.status = 'cancelled'
-                    AND json_extract(prompt.payload_json, '$.inputIntent') = 'queued_turn')
-              `;
-            const prompts = yield* decodeRows(decodeTurnItemPayload, threadId)(promptRows);
-            const historyContextItems = prompts.map((item, position) => ({
-              position,
-              visibility: item.threadId === threadId ? ("local" as const) : ("inherited" as const),
-              sourceThreadId: item.threadId,
-              sourceItemId: item.id,
-              item,
-            }));
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
@@ -5944,7 +5891,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
               projection,
-              historyContextItems,
             };
           }),
         )
@@ -7857,17 +7803,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                       : selectHistoryPageFromCursor({
                           items:
                             workMode === "deferred"
-                              ? deferWorkHistoryRows(
-                                  visible.map((row) => ({
-                                    ...row,
-                                    item: {
-                                      ...row.item,
-                                      runStatus: projection.runs.find(
-                                        (run) => run.id === row.item.runId,
-                                      )?.status,
-                                    },
-                                  })),
-                                )
+                              ? deferWorkHistoryRows(visible, projection.runs)
                               : visible,
                           cursor,
                           throughEntryId,
@@ -7875,7 +7811,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                         });
                   const items = [
                     ...(workMode === "work" ? [] : missingInterruptRequests(visible, page.items)),
-                    ...(workMode === "work" ? [] : missingUserTurnStarts(visible, page.items)),
                     ...page.items,
                   ]
                     .sort((left, right) => left.position - right.position)
@@ -7921,16 +7856,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   ) + 1;
             const allCandidates = snapshot.projection.visibleTurnItems.slice(0, anchorIndex);
             const candidates = options.deferWork
-              ? deferWorkHistoryRows(
-                  allCandidates.map((row) => ({
-                    ...row,
-                    item: {
-                      ...row.item,
-                      runStatus: snapshot.projection.runs.find((run) => run.id === row.item.runId)
-                        ?.status,
-                    },
-                  })),
-                )
+              ? deferWorkHistoryRows(allCandidates, snapshot.projection.runs)
               : allCandidates;
             const turnStarts = threadHistoryTurnStarts(candidates.map((row) => row.item));
             const turnAnchors =
@@ -7947,19 +7873,20 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 ? anchors.length < anchorLimit
                   ? rawStart
                   : anchors.at(-anchorLimit)!
-                : Math.max(0, anchorIndex - options.rowLimit);
-            const latestTurnRows = anchors.length > 0 ? anchorIndex - anchors.at(-1)! : 0;
+                : Math.max(0, candidates.length - options.rowLimit);
+            const latestTurnRows = anchors.length > 0 ? candidates.length - anchors.at(-1)! : 0;
             const rowLimit =
               options.rowLimit > 0 &&
               latestTurnRows > 0 &&
               latestTurnRows <= THREAD_HISTORY_PAGE_POLICY.maxTurnItems
                 ? THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT
                 : options.rowLimit;
-            const selected = candidates.slice(Math.max(start, anchorIndex - Math.max(0, rowLimit)));
+            const selected = candidates.slice(
+              Math.max(start, candidates.length - Math.max(0, rowLimit)),
+            );
             return {
               ...snapshot,
               projection: { ...snapshot.projection, visibleTurnItems: selected },
-              historyContextItems: missingUserTurnStarts(candidates, selected),
             };
           }),
         ),

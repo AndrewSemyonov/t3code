@@ -52,11 +52,19 @@ function renumberVisible(
 export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  work?: { readonly anchorId: string; readonly nextCursor: string | null },
 ): OrchestrationV2ThreadProjection {
-  if (olderItems.length === 0) {
+  if (olderItems.length === 0 && work === undefined) {
     return projection;
   }
 
+  const start =
+    work === undefined
+      ? -1
+      : projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
+  const anchor = projection.visibleTurnItems[start];
+  const deferred = anchor?.item.deferredWork;
+  if (work !== undefined && deferred === undefined) return projection;
   const currentByKey = new Map(
     projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
   );
@@ -64,6 +72,15 @@ export function mergeOlderHistoryIntoProjection(
   const pageKeys = new Set<string>();
   const page: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
+    if (
+      work &&
+      anchor &&
+      deferred &&
+      (pageRow.sourceThreadId !== anchor.sourceThreadId ||
+        pageRow.item.ordinal < anchor.item.ordinal ||
+        pageRow.item.ordinal > deferred.lastOrdinal)
+    )
+      continue;
     const key = projectedItemKey(pageRow);
     if (pageKeys.has(key)) continue;
     let row = currentByKey.get(key) ?? pageRow;
@@ -94,11 +111,50 @@ export function mergeOlderHistoryIntoProjection(
     )
       turnItemById.set(String(row.sourceItemId), row.item);
   }
-  if (page.length === 0) return projection;
-  const visible = [
+  if (page.length === 0 && work === undefined) return projection;
+  let visible = [
     ...page,
     ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
   ];
+  if (work && anchor && deferred) {
+    let end = start + 1;
+    while (end < projection.visibleTurnItems.length) {
+      const row = projection.visibleTurnItems[end]!;
+      if (
+        row.sourceThreadId !== anchor.sourceThreadId ||
+        row.visibility === "synthetic" ||
+        row.item.ordinal > deferred.lastOrdinal
+      )
+        break;
+      end += 1;
+    }
+    const { deferredWork: _deferred, ...complete } = anchor.item;
+    const updated = {
+      ...anchor,
+      item:
+        work.nextCursor === null
+          ? complete
+          : {
+              ...anchor.item,
+              deferredWork: { ...deferred, cursor: work.nextCursor },
+            },
+    };
+    const section = [
+      ...page,
+      ...projection.visibleTurnItems
+        .slice(start, end)
+        .filter((row) => !pageKeys.has(projectedItemKey(row))),
+    ];
+    const ordered = section
+      .map((row) => (row.sourceItemId === anchor.sourceItemId ? updated : row))
+      .sort((left, right) => left.item.ordinal - right.item.ordinal);
+    visible = [
+      ...projection.visibleTurnItems.slice(0, start),
+      ...ordered,
+      ...projection.visibleTurnItems.slice(end),
+    ];
+    if (anchor.visibility === "local") turnItemById.set(String(updated.item.id), updated.item);
+  }
   if (
     visible.length === projection.visibleTurnItems.length &&
     visible.every((row, index) => row === projection.visibleTurnItems[index])
@@ -125,70 +181,6 @@ export function applyHistoryPageMeta(
     error: null,
     expanded: true,
     latestLocalTurnOrdinal: current.latestLocalTurnOrdinal,
-  };
-}
-
-export function mergeDeferredWorkIntoProjection(
-  projection: OrchestrationV2ThreadProjection,
-  anchorId: string,
-  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  nextCursor: string | null,
-): OrchestrationV2ThreadProjection {
-  const start = projection.visibleTurnItems.findIndex((row) => row.sourceItemId === anchorId);
-  const anchor = projection.visibleTurnItems[start];
-  const deferred = anchor?.item.deferredWork;
-  if (anchor === undefined || deferred === undefined) return projection;
-  let end = start + 1;
-  while (end < projection.visibleTurnItems.length) {
-    const row = projection.visibleTurnItems[end]!;
-    if (
-      row.sourceThreadId !== anchor.sourceThreadId ||
-      row.visibility === "synthetic" ||
-      row.item.ordinal > deferred.lastOrdinal
-    )
-      break;
-    end += 1;
-  }
-  const current = new Map(
-    projection.visibleTurnItems.slice(start, end).map((row) => [projectedItemKey(row), row]),
-  );
-  const local = new Map(projection.turnItems.map((item) => [String(item.id), item]));
-  for (const row of items) {
-    if (
-      row.sourceThreadId !== anchor.sourceThreadId ||
-      row.item.ordinal < anchor.item.ordinal ||
-      row.item.ordinal > deferred.lastOrdinal ||
-      current.has(projectedItemKey(row))
-    )
-      continue;
-    if (row.visibility === "local" && local.has(String(row.item.id))) continue;
-    current.set(projectedItemKey(row), row);
-    if (row.visibility === "local") local.set(String(row.item.id), row.item);
-  }
-  const { deferredWork: _deferred, ...complete } = anchor.item;
-  const updated = {
-    ...anchor,
-    item:
-      nextCursor === null
-        ? complete
-        : {
-            ...anchor.item,
-            deferredWork: { ...deferred, cursor: nextCursor },
-          },
-  };
-  current.set(projectedItemKey(anchor), updated);
-  if (anchor.visibility === "local") local.set(String(anchor.item.id), updated.item);
-  const section = [...current.values()].sort(
-    (left, right) => left.item.ordinal - right.item.ordinal,
-  );
-  return {
-    ...projection,
-    turnItems: [...local.values()],
-    visibleTurnItems: renumberVisible([
-      ...projection.visibleTurnItems.slice(0, start),
-      ...section,
-      ...projection.visibleTurnItems.slice(end),
-    ]),
   };
 }
 

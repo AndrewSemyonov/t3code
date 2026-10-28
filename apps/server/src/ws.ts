@@ -2054,7 +2054,6 @@ export const layerWsRpc = (
                       buildBoundedThreadProjection({
                         projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
-                        historyContextItems: snapshot.historyContextItems,
                       }).projection,
                   ),
                   Effect.mapError(

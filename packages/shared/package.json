@@ -3,10 +3,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./orchestrationV2WorkHistory": {
-      "types": "./src/orchestrationV2WorkHistory.ts",
-      "import": "./src/orchestrationV2WorkHistory.ts"
-    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

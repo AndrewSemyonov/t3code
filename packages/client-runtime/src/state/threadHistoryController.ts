@@ -13,8 +13,10 @@ export type ThreadHistoryLoadEarlierResult =
   | { readonly _tag: "error"; readonly message: string };
 
 export type ThreadHistoryHandler = {
-  readonly loadWork?: (anchorId: string) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
-  readonly loadEarlier: (throughEntryId?: string) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+  readonly loadEarlier: (
+    throughEntryId?: string,
+    workAnchorId?: string,
+  ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
   readonly reconcilePendingWork: () => Effect.Effect<void>;
 };
 
@@ -37,11 +39,7 @@ export class ThreadHistoryController extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
       throughEntryId?: string,
-    ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
-    readonly loadWork: (
-      environmentId: EnvironmentId,
-      threadId: ThreadId,
-      anchorId: string,
+      workAnchorId?: string,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
     readonly reconcilePendingWork: (
       environmentId: EnvironmentId,
@@ -87,26 +85,15 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
         });
       }),
       loadEarlier: Effect.fn("ThreadHistoryController.loadEarlier")(
-        function (environmentId, threadId, throughEntryId) {
+        function (environmentId, threadId, throughEntryId, workAnchorId) {
           return Ref.get(handlers).pipe(
             Effect.flatMap((current) => {
               const handler = current.get(threadKey({ environmentId, threadId }));
               if (handler === undefined) {
                 return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
               }
-              return handler.loadEarlier(throughEntryId);
+              return handler.loadEarlier(throughEntryId, workAnchorId);
             }),
-          );
-        },
-      ),
-      loadWork: Effect.fn("ThreadHistoryController.loadWork")(
-        function (environmentId, threadId, anchorId) {
-          return Ref.get(handlers).pipe(
-            Effect.flatMap(
-              (current) =>
-                current.get(threadKey({ environmentId, threadId }))?.loadWork?.(anchorId) ??
-                Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult),
-            ),
           );
         },
       ),

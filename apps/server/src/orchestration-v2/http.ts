@@ -234,7 +234,6 @@ export const layer = HttpApiBuilder.group(
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
-            historyContextItems: snapshot.historyContextItems,
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
