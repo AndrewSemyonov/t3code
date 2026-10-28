@@ -327,9 +327,10 @@ export const make = Effect.gen(function* () {
           );
           // A refresh ahead of expiry that fails leaves the still-valid token in use.
           return yield* refresh(host, current.value).pipe(
-            Effect.catchTag("GitHubAppSessionError", (error) =>
-              Option.isSome(usable) ? Effect.succeed(usable) : Effect.fail(error),
-            ),
+            Effect.catchTags({
+              GitHubAppSessionError: (error) =>
+                Option.isSome(usable) ? Effect.succeed(usable) : Effect.fail(error),
+            }),
           );
         }),
       );
