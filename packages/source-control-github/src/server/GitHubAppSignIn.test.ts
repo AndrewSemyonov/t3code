@@ -300,6 +300,7 @@ describe("GitHubAppSignIn", () => {
     const { layer } = harness({
       signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
       handle: () => ({ status: 502, body: {} }),
+      ghSignedIn: false,
     });
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
@@ -443,10 +444,26 @@ describe("GitHubAppSignIn", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("uses the gh login while the app session cannot refresh, and keeps the session", () => {
+    const { layer } = harness({
+      signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
+      handle: () => ({ status: 502, body: {} }),
+    });
+    return Effect.gen(function* () {
+      const credential = yield* (yield* GitHubCredentials.GitHubCredentials).get(
+        "github.com",
+        "pingdotgg/t3code",
+      );
+      expect(credential.source).toBe("gh");
+      expect(Object.keys(yield* savedSignIns)).toEqual(["github.com"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("keeps the session when GitHub answers a refresh with another error", () => {
     const { layer } = harness({
       signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
       handle: () => ({ body: { error: "unauthorized_client" } }),
+      ghSignedIn: false,
     });
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;

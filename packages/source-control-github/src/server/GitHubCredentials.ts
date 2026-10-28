@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -251,13 +252,18 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      const signedIn = yield* appSignIn.token(host);
-      if (Option.isNone(signedIn)) return yield* Cache.get(cache, cacheKey(host, choice?.account));
+      const personal = Cache.get(cache, cacheKey(host, choice?.account));
+      const session = yield* Effect.result(appSignIn.token(host));
+      if (Result.isFailure(session)) {
+        // An app session that cannot refresh right now steps aside for the user's own credential.
+        return yield* personal.pipe(Effect.mapError(() => session.failure));
+      }
+      if (Option.isNone(session.success)) return yield* personal;
       const app = {
         host,
-        token: Redacted.make(signedIn.value),
+        token: Redacted.make(session.success.value),
         source: "app",
-        fingerprint: yield* fingerprintOf(host, signedIn.value),
+        fingerprint: yield* fingerprintOf(host, session.success.value),
       } satisfies GitHubCredential;
       const scope = typeof repositories === "string" ? [repositories] : (repositories ?? []);
       const reachesAll = yield* Effect.forEach(scope, (repository) =>
@@ -265,9 +271,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((answers) => !answers.includes("not-covered")));
       if (reachesAll) return app;
       // The user's own credential reaches what they can; the app token still reads public repositories.
-      return yield* Cache.get(cache, cacheKey(host, choice?.account)).pipe(
-        Effect.orElseSucceed(() => app),
-      );
+      return yield* personal.pipe(Effect.orElseSucceed(() => app));
     }),
     invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost, rejected) {
       const host = normalizeHost(rawHost);
