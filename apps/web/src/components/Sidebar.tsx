@@ -80,6 +80,7 @@ import {
   type ReactNode,
 } from "react";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   isAtomCommandInterrupted,
@@ -1095,6 +1096,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  const composerModelSelectionByThreadKey = useComposerDraftStore(
+    useShallow(
+      (store) =>
+        new Map(
+          Object.entries(store.draftsByThreadKey).flatMap(([key, draft]) => {
+            const selection = draft.activeProvider
+              ? draft.modelSelectionByProvider[draft.activeProvider]
+              : undefined;
+            if (!selection) return [];
+            const session = store.draftThreadsByThreadKey[key];
+            const ref = session?.promotedTo ?? session;
+            return [[ref ? scopedThreadKey(ref) : key, selection] as const];
+          }),
+        ),
+    ),
+  );
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
@@ -2982,6 +2999,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         isSettled={settledThreadKeys.has(threadKey)}
                         key={threadKey}
                         thread={thread}
+                        composerModelSelection={composerModelSelectionByThreadKey.get(threadKey)}
                         project={
                           projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
@@ -3144,6 +3162,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               providerEntriesByEnvironment.get(thread.environmentId) ??
                               EMPTY_PROVIDER_ENTRIES
                             }
+                            composerModelSelection={composerModelSelectionByThreadKey.get(
+                              threadKey,
+                            )}
                             timestampFormat={timestampFormat}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}

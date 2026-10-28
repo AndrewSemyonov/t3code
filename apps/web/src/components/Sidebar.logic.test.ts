@@ -1,4 +1,7 @@
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  presentThreadShell,
+  resolveThreadProviderStack,
+} from "@t3tools/client-runtime/state/models";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -50,6 +53,31 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("sidebar provider stack", () => {
+  it("shows the composer instance without changing the runtime owner or used-provider history", () => {
+    const original = ProviderInstanceId.make("codex");
+    const selected = ProviderInstanceId.make("codex_work");
+    const previous = ProviderInstanceId.make("claudeAgent");
+    const thread = makeThreadFixture({
+      providerInstanceHistory: [previous, original],
+      runtime: {
+        status: "idle",
+        activeRunId: null,
+        providerInstanceId: original,
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(resolveThreadProviderStack(thread, selected)).toEqual([previous, original, selected]);
+    expect(resolveThreadProviderStack(thread, previous)).toEqual([original, previous]);
+    expect(resolveThreadProviderStack(thread)).toEqual([previous, original]);
+    expect(thread.runtime?.providerInstanceId).toBe(original);
+    expect(thread.providerInstanceHistory).toEqual([previous, original]);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

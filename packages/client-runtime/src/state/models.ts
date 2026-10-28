@@ -366,8 +366,10 @@ const THREAD_PROVIDER_STACK_LIMIT = 3;
 
 export function resolveThreadProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
+  selectedInstanceId?: ProviderInstanceId,
 ): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const current =
+    selectedInstanceId ?? thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
   return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }

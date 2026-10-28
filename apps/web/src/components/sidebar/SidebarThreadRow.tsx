@@ -113,6 +113,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } f
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -180,9 +181,10 @@ function terminalProcessLabel(count: number): string {
 
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
+  selectedInstanceId?: ProviderInstanceId | undefined;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
 }) {
-  const stack = resolveThreadProviderStack(props.thread);
+  const stack = resolveThreadProviderStack(props.thread, props.selectedInstanceId);
   const currentInstanceId = stack[stack.length - 1]!;
   const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
   if (currentEntry === null) return null;
@@ -517,6 +519,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
+  composerModelSelection?: ModelSelection | undefined;
   variant: "card" | "slim";
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
@@ -768,17 +771,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const prStatus = prStatusIndicator(pr, linkedPullRequestStatus?.sourceControlProvider);
 
-  const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const modelSelection = props.composerModelSelection ?? thread.modelSelection;
+  const modelInstanceId =
+    props.composerModelSelection?.instanceId ??
+    thread.runtime?.providerInstanceId ??
+    modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
-  const selectedModel = providerEntry?.models.find(
-    (model) => model.slug === thread.modelSelection.model,
-  );
+  const selectedModel = providerEntry?.models.find((model) => model.slug === modelSelection.model);
   const modelLabel = selectedModel
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : thread.modelSelection.model;
+    : modelSelection.model;
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
@@ -1482,6 +1487,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <span aria-hidden className="inline-flex shrink-0">
                   <SidebarProviderStack
                     thread={thread}
+                    selectedInstanceId={props.composerModelSelection?.instanceId}
                     providerEntryByInstanceId={props.providerEntryByInstanceId}
                   />
                 </span>
@@ -1535,6 +1541,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   ) : null}
                   <SidebarProviderStack
                     thread={thread}
+                    selectedInstanceId={props.composerModelSelection?.instanceId}
                     providerEntryByInstanceId={props.providerEntryByInstanceId}
                   />
                 </span>
@@ -1566,6 +1573,7 @@ const scrollHighlightedResultIntoView = (node: HTMLLIElement | null) => {
 export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
+  composerModelSelection?: ModelSelection | undefined;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
@@ -1613,17 +1621,19 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     activeThreadBranch: thread.branch,
     currentGitBranch: visibleGitStatus?.refName ?? null,
   });
-  const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const modelSelection = props.composerModelSelection ?? thread.modelSelection;
+  const modelInstanceId =
+    props.composerModelSelection?.instanceId ??
+    thread.runtime?.providerInstanceId ??
+    modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
-  const selectedModel = providerEntry?.models.find(
-    (model) => model.slug === thread.modelSelection.model,
-  );
+  const selectedModel = providerEntry?.models.find((model) => model.slug === modelSelection.model);
   const modelLabel = selectedModel
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : thread.modelSelection.model;
+    : modelSelection.model;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
