@@ -857,224 +857,241 @@ export const make = Effect.gen(function* () {
     return { title: subject.title, body: subject.body ?? null };
   });
 
+  // `resolveRepository` sends a checkout's calls to GH_REPO when it parses, so scope them there.
+  const ghRepoLocator = parseGitHubRepositorySelector(environment.GH_REPO ?? "", "github.com");
+  const ghRepoTarget =
+    ghRepoLocator === null ? null : `${ghRepoLocator.owner}/${ghRepoLocator.name}`;
+
   return SourceControlProvider.SourceControlProvider.of(
-    GitHubRequestPolicy.scopeMethodsToRepository({
-      kind: SourceControlProviderKind.make("github"),
-      // GitHub matches bare heads; read a full page to disambiguate forks by owner.
-      headBranchProbe: ({ headSelectors }) => ({
-        headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
-        limit: 100,
-      }),
-      readChangeRequestTemplate: Effect.fn("GitHubSourceControlProvider.readChangeRequestTemplate")(
-        function ({ cwd, treeish }) {
+    GitHubRequestPolicy.scopeMethodsToRepository(
+      {
+        kind: SourceControlProviderKind.make("github"),
+        // GitHub matches bare heads; read a full page to disambiguate forks by owner.
+        headBranchProbe: ({ headSelectors }) => ({
+          headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+          limit: 100,
+        }),
+        readChangeRequestTemplate: Effect.fn(
+          "GitHubSourceControlProvider.readChangeRequestTemplate",
+        )(function ({ cwd, treeish }) {
           return GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
-        },
-      ),
-      // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
-      // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
-      // non-default port in the context's host, and the mark is then ignored.
-      createsChangeRequestsIn: Effect.fn("GitHubSourceControlProvider.createsChangeRequestsIn")(
-        function* ({ cwd, context, repository }) {
-          const host = URL.canParse(context.provider.baseUrl)
-            ? new URL(context.provider.baseUrl).host
-            : null;
-          const target = repository?.toLowerCase();
-          const fromEnvironment = parseGitHubRepositorySelector(
-            environment.GH_REPO ?? "",
-            host ?? "",
-          );
-          if (fromEnvironment !== null) {
-            const { host: targetHost, owner, name } = fromEnvironment;
-            return (
-              host !== null &&
-              URL.canParse(`https://${targetHost}`) &&
-              new URL(`https://${targetHost}`).host === host &&
-              `${owner}/${name}`.toLowerCase() === target
+        }),
+        // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
+        // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
+        // non-default port in the context's host, and the mark is then ignored.
+        createsChangeRequestsIn: Effect.fn("GitHubSourceControlProvider.createsChangeRequestsIn")(
+          function* ({ cwd, context, repository }) {
+            const host = URL.canParse(context.provider.baseUrl)
+              ? new URL(context.provider.baseUrl).host
+              : null;
+            const target = repository?.toLowerCase();
+            const fromEnvironment = parseGitHubRepositorySelector(
+              environment.GH_REPO ?? "",
+              host ?? "",
             );
-          }
-          const mark = yield* git
-            .readConfigValue(cwd, `remote.${context.remoteName}.gh-resolved`)
-            .pipe(Effect.orElseSucceed(() => null));
-          const { locator } = resolveGitHubRepository({
-            remotes: `${context.remoteName}\t${context.remoteUrl} (fetch)`,
-            resolved: mark === null ? "" : `remote.${context.remoteName}.gh-resolved ${mark}`,
-            hostHint: host ?? undefined,
-            defaultHost: host ?? "github.com",
-          });
-          return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === target;
-        },
-      ),
-      // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
-      // from this key.
-      recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
-        cwd,
-        branch,
-        baseBranch,
-      }) {
-        return git
-          .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not record the branch base for gh", { cause }),
-            ),
-          );
-      }),
-      resolveLink: (input) => {
-        // Automatic enrichment must not send ambient CLI credentials to a host from message text.
-        if (input.url.host !== "github.com") return undefined;
-        const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
-          input.url.pathname,
-        );
-        if (!match) return undefined;
-        return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
-      },
-      listChangeRequests: Effect.fn("GitHubSourceControlProvider.listChangeRequests")(
-        function (input) {
-          return (
-            input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive
-          ).pipe(
-            Effect.flatMap((allowReserve) =>
-              listByHead({
-                cwd: input.cwd,
-                headSelector: input.headSelector,
-                state: input.state,
-                limit: input.limit ?? (input.state === "open" ? 1 : 20),
-                host: contextHost(input.context),
-                context: input.context,
-                allowReserve,
-              }),
-            ),
-            Effect.map((records) => records.map(toChangeRequest)),
-            Effect.mapError(
-              providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
-            ),
-          );
-        },
-      ),
-      getChangeRequest: Effect.fn("GitHubSourceControlProvider.getChangeRequest")(function (input) {
-        return readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
-          Effect.map(toChangeRequest),
-          Effect.mapError(
-            providerError("getChangeRequest", input.cwd, { reference: input.reference }),
-          ),
-        );
-      }),
-      createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
-        function* (input) {
-          const locator = yield* resolveRepository(input);
-          const body = yield* fileSystem
-            .readFileString(input.bodyFile)
+            if (fromEnvironment !== null) {
+              const { host: targetHost, owner, name } = fromEnvironment;
+              return (
+                host !== null &&
+                URL.canParse(`https://${targetHost}`) &&
+                new URL(`https://${targetHost}`).host === host &&
+                `${owner}/${name}`.toLowerCase() === target
+              );
+            }
+            const mark = yield* git
+              .readConfigValue(cwd, `remote.${context.remoteName}.gh-resolved`)
+              .pipe(Effect.orElseSucceed(() => null));
+            const { locator } = resolveGitHubRepository({
+              remotes: `${context.remoteName}\t${context.remoteUrl} (fetch)`,
+              resolved: mark === null ? "" : `remote.${context.remoteName}.gh-resolved ${mark}`,
+              hostHint: host ?? undefined,
+              defaultHost: host ?? "github.com",
+            });
+            return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === target;
+          },
+        ),
+        // `gh pr create` run in the checkout, as an agent in a T3 worktree often does, takes its base
+        // from this key.
+        recordBranchBase: Effect.fn("GitHubSourceControlProvider.recordBranchBase")(function ({
+          cwd,
+          branch,
+          baseBranch,
+        }) {
+          return git
+            .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
             .pipe(
-              Effect.mapError((cause) =>
-                failure("The pull request description could not be read.", cause),
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not record the branch base for gh", { cause }),
               ),
             );
-          yield* rest({
-            host: locator.host,
-            operation: "createPullRequest",
-            method: "POST",
-            allowReserve: true,
-            path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-            // Explicitly allow maintainer edits to match gh; the API default is undocumented.
-            body: {
-              base: input.baseRefName,
-              head: input.headSelector,
-              title: input.title,
-              body,
-              maintainer_can_modify: true,
-            },
-          });
-        },
-        (effect, input) =>
-          effect.pipe(
-            Effect.mapError(
-              providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
-            ),
-          ),
-      ),
-      getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
-        function* (input) {
-          const fallbackHost = (yield* resolveRepository(input).pipe(
-            Effect.map((locator) => locator.host),
-            Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
-          )).toLowerCase();
-          const bareName = input.repository.trim().replace(/\.git$/i, "");
-          const locator =
-            parseGitHubRepositorySelector(input.repository, fallbackHost) ??
-            (/^[^/\s]+$/.test(bareName)
-              ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
-              : null);
-          if (locator === null) return yield* failure("Repositories are named owner/name.");
-          return repositoryCloneUrls(yield* readRepository(locator));
-        },
-        (effect, input) =>
-          effect.pipe(
-            Effect.mapError(
-              providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
-            ),
-          ),
-      ),
-      createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
-        function* (input) {
-          const locator = parseGitHubRepositorySelector(
-            input.repository,
-            (environment.GH_HOST ?? "github.com").toLowerCase(),
+        }),
+        resolveLink: (input) => {
+          // Automatic enrichment must not send ambient CLI credentials to a host from message text.
+          if (input.url.host !== "github.com") return undefined;
+          const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+            input.url.pathname,
           );
-          const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
-          const owner = locator?.owner ?? viewer;
-          const name = locator?.name ?? input.repository.trim();
-          const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
-          const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
-          const response = yield* rest(
-            {
-              host,
-              operation: "createRepository",
+          if (!match) return undefined;
+          return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
+        },
+        listChangeRequests: Effect.fn("GitHubSourceControlProvider.listChangeRequests")(
+          function (input) {
+            return (
+              input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive
+            ).pipe(
+              Effect.flatMap((allowReserve) =>
+                listByHead({
+                  cwd: input.cwd,
+                  headSelector: input.headSelector,
+                  state: input.state,
+                  limit: input.limit ?? (input.state === "open" ? 1 : 20),
+                  host: contextHost(input.context),
+                  context: input.context,
+                  allowReserve,
+                }),
+              ),
+              Effect.map((records) => records.map(toChangeRequest)),
+              Effect.mapError(
+                providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+              ),
+            );
+          },
+        ),
+        getChangeRequest: Effect.fn("GitHubSourceControlProvider.getChangeRequest")(
+          function (input) {
+            return readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
+              Effect.map(toChangeRequest),
+              Effect.mapError(
+                providerError("getChangeRequest", input.cwd, { reference: input.reference }),
+              ),
+            );
+          },
+        ),
+        createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
+          function* (input) {
+            const locator = yield* resolveRepository(input);
+            const body = yield* fileSystem
+              .readFileString(input.bodyFile)
+              .pipe(
+                Effect.mapError((cause) =>
+                  failure("The pull request description could not be read.", cause),
+                ),
+              );
+            yield* rest({
+              host: locator.host,
+              operation: "createPullRequest",
               method: "POST",
               allowReserve: true,
-              path:
-                isViewer || owner === null
-                  ? "user/repos"
-                  : `orgs/${encodeURIComponent(owner)}/repos`,
-              body: { name, private: input.visibility === "private" },
-            },
-            `No organization named ${owner ?? "that"} that this account can create repositories in.`,
-          );
-          const decoded = decodeRawRepository(response.body);
-          if (Result.isFailure(decoded)) {
-            return yield* failure("GitHub returned an invalid repository.", decoded.failure);
-          }
-          return repositoryCloneUrls(decoded.success);
-        },
-        (effect, input) =>
-          effect.pipe(
-            Effect.mapError(
-              providerError("createRepository", input.cwd, { repository: input.repository }),
+              path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
+              // Explicitly allow maintainer edits to match gh; the API default is undocumented.
+              body: {
+                base: input.baseRefName,
+                head: input.headSelector,
+                title: input.title,
+                body,
+                maintainer_can_modify: true,
+              },
+            });
+          },
+          (effect, input) =>
+            effect.pipe(
+              Effect.mapError(
+                providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
+              ),
             ),
-          ),
-      ),
-      getDefaultBranch: Effect.fn("GitHubSourceControlProvider.getDefaultBranch")(
-        function* (input) {
-          const locator = yield* resolveRepository({
-            cwd: input.cwd,
-            host: contextHost(input.context),
-            context: input.context,
-          });
-          const repository = yield* readRepository(locator);
-          const branch = repository.default_branch?.trim() ?? "";
-          return branch.length > 0 ? branch : null;
-        },
-        (effect, input) =>
-          effect.pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
-      ),
-      checkoutChangeRequest: Effect.fn("GitHubSourceControlProvider.checkoutChangeRequest")(
-        function (input) {
-          return checkoutPullRequest(input).pipe(
-            Effect.mapError(
-              providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
+        ),
+        getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
+          function* (input) {
+            const fallbackHost = (yield* resolveRepository(input).pipe(
+              Effect.map((locator) => locator.host),
+              Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
+            )).toLowerCase();
+            const bareName = input.repository.trim().replace(/\.git$/i, "");
+            const locator =
+              parseGitHubRepositorySelector(input.repository, fallbackHost) ??
+              (/^[^/\s]+$/.test(bareName)
+                ? {
+                    host: fallbackHost,
+                    owner: yield* readViewerLogin(fallbackHost),
+                    name: bareName,
+                  }
+                : null);
+            if (locator === null) return yield* failure("Repositories are named owner/name.");
+            return repositoryCloneUrls(yield* readRepository(locator));
+          },
+          (effect, input) =>
+            effect.pipe(
+              Effect.mapError(
+                providerError("getRepositoryCloneUrls", input.cwd, {
+                  repository: input.repository,
+                }),
+              ),
             ),
-          );
-        },
-      ),
-    }),
+        ),
+        createRepository: Effect.fn("GitHubSourceControlProvider.createRepository")(
+          function* (input) {
+            const locator = parseGitHubRepositorySelector(
+              input.repository,
+              (environment.GH_HOST ?? "github.com").toLowerCase(),
+            );
+            const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
+            const owner = locator?.owner ?? viewer;
+            const name = locator?.name ?? input.repository.trim();
+            const host =
+              locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
+            const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
+            const response = yield* rest(
+              {
+                host,
+                operation: "createRepository",
+                method: "POST",
+                allowReserve: true,
+                path:
+                  isViewer || owner === null
+                    ? "user/repos"
+                    : `orgs/${encodeURIComponent(owner)}/repos`,
+                body: { name, private: input.visibility === "private" },
+              },
+              `No organization named ${owner ?? "that"} that this account can create repositories in.`,
+            );
+            const decoded = decodeRawRepository(response.body);
+            if (Result.isFailure(decoded)) {
+              return yield* failure("GitHub returned an invalid repository.", decoded.failure);
+            }
+            return repositoryCloneUrls(decoded.success);
+          },
+          (effect, input) =>
+            effect.pipe(
+              Effect.mapError(
+                providerError("createRepository", input.cwd, { repository: input.repository }),
+              ),
+            ),
+        ),
+        getDefaultBranch: Effect.fn("GitHubSourceControlProvider.getDefaultBranch")(
+          function* (input) {
+            const locator = yield* resolveRepository({
+              cwd: input.cwd,
+              host: contextHost(input.context),
+              context: input.context,
+            });
+            const repository = yield* readRepository(locator);
+            const branch = repository.default_branch?.trim() ?? "";
+            return branch.length > 0 ? branch : null;
+          },
+          (effect, input) =>
+            effect.pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
+        ),
+        checkoutChangeRequest: Effect.fn("GitHubSourceControlProvider.checkoutChangeRequest")(
+          function (input) {
+            return checkoutPullRequest(input).pipe(
+              Effect.mapError(
+                providerError("checkoutChangeRequest", input.cwd, { reference: input.reference }),
+              ),
+            );
+          },
+        ),
+      },
+      { checkoutTarget: ghRepoTarget },
+    ),
   );
 });

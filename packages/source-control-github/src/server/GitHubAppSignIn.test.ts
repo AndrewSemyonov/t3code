@@ -580,4 +580,22 @@ describe("scopeMethodsToRepository", () => {
       expect(yield* scoped.viewer({ host: "github.com" })).toBeNull();
     });
   });
+
+  it.effect("scopes a checkout's calls to the repository GH_REPO targets", () => {
+    const scoped = GitHubRequestPolicy.scopeMethodsToRepository(
+      {
+        push: (_input: { readonly context: { readonly remoteUrl: string } }) =>
+          GitHubRequestPolicy.GitHubRepositoryScope,
+        read: (_input: { readonly repository: string }) =>
+          GitHubRequestPolicy.GitHubRepositoryScope,
+      },
+      { checkoutTarget: "upstream/main-repo" },
+    );
+    return Effect.gen(function* () {
+      expect(
+        yield* scoped.push({ context: { remoteUrl: "git@github.com:fork/main-repo.git" } }),
+      ).toEqual(["upstream/main-repo"]);
+      expect(yield* scoped.read({ repository: "acme/one" })).toEqual(["acme/one"]);
+    });
+  });
 });

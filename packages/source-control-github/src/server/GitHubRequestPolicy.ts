@@ -41,7 +41,10 @@ export const GitHubRepositoryScope = Context.Reference<ReadonlyArray<string> | n
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-function repositoriesOf(input: unknown): ReadonlyArray<string> | null {
+function repositoriesOf(
+  input: unknown,
+  checkoutTarget: string | null,
+): ReadonlyArray<string> | null {
   if (!isRecord(input)) return null;
   if (typeof input.repository === "string") return [input.repository];
   // Batched reads name several repositories, or change requests that each name one.
@@ -53,7 +56,9 @@ function repositoriesOf(input: unknown): ReadonlyArray<string> | null {
       isRecord(entry) && typeof entry.repository === "string" ? [entry.repository] : [],
     );
   }
-  // A checkout names its repository through the remote it pushes to.
+  // A checkout names its repository through the remote it pushes to, unless the provider
+  // targets another one for every checkout.
+  if (isRecord(input.context) && checkoutTarget !== null) return [checkoutTarget];
   const remote =
     isRecord(input.context) && typeof input.context.remoteUrl === "string"
       ? repositoryPathFromRemoteUrl(input.context.remoteUrl)
@@ -65,7 +70,13 @@ function repositoriesOf(input: unknown): ReadonlyArray<string> | null {
  * Every method whose first argument names its repositories (`repository`, `repositories`,
  * `changeRequests`, or a checkout `context`) runs in their scope.
  */
-export function scopeMethodsToRepository<T extends object>(methods: T): T {
+export function scopeMethodsToRepository<T extends object>(
+  methods: T,
+  options?: {
+    /** `owner/name` a checkout's calls go to instead of its remote, as `GH_REPO` sets. */
+    readonly checkoutTarget?: string | null;
+  },
+): T {
   const scoped: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(methods)) {
     scoped[key] =
@@ -73,7 +84,7 @@ export function scopeMethodsToRepository<T extends object>(methods: T): T {
         ? value
         : (...args: Array<unknown>) => {
             const result: unknown = Reflect.apply(value, methods, args);
-            const repositories = repositoriesOf(args[0]);
+            const repositories = repositoriesOf(args[0], options?.checkoutTarget ?? null);
             if (repositories === null || !Effect.isEffect(result)) return result;
             // @effect-diagnostics-next-line anyUnknownInErrorContext:off - forwards each method's own effect, whose channels `T` keeps.
             return Effect.provideService(result, GitHubRepositoryScope, repositories);
