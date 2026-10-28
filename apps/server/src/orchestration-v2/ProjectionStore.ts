@@ -5310,6 +5310,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readTimelineIndex: (
       threadId: ThreadId,
       seen: ReadonlySet<ThreadId>,
+      includePersistentOutput?: boolean,
     ) => Effect.Effect<
       {
         readonly records: ProjectionRecords<"runs" | "attempts">;
@@ -5318,7 +5319,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       },
       ProjectionStoreV2Error
     > = Effect.fn("ProjectionStore.readTimelineIndex")(
-      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>) {
+      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includePersistentOutput = false) {
         const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
         const rows = yield* sql<{
           turn_item_id: string;
@@ -5333,9 +5334,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ordinal: number;
           persistent_output: number;
         }>`SELECT turn_item_id, run_id, node_id, parent_item_id, type, status, ordinal,
-          CASE WHEN type = 'dynamic_tool' AND (payload_json LIKE '%htmlRender%'
-            OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-            OR payload_json LIKE '%"viewedImagePath"%') THEN 1 ELSE 0 END AS persistent_output,
+          ${
+            includePersistentOutput
+              ? sql`CASE WHEN type = 'dynamic_tool' AND (payload_json LIKE '%htmlRender%'
+              OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+              OR payload_json LIKE '%"viewedImagePath"%') THEN 1 ELSE 0 END`
+              : sql`0`
+          } AS persistent_output,
           CASE WHEN type = 'user_message' THEN json_extract(payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN type = 'user_message' THEN json_extract(payload_json, '$.createdBy') END AS created_by,
           CASE WHEN type IN ('user_message', 'assistant_message') THEN json_extract(payload_json, '$.messageId') END AS message_id
@@ -5371,7 +5376,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const visible = local.filter((row) => isVisible(row.item));
         const fork = records.thread.forkedFrom;
         if (fork?.type !== "run" || seen.has(fork.threadId)) return { records, local, visible };
-        const source = yield* readTimelineIndex(fork.threadId, new Set([...seen, threadId]));
+        const source = yield* readTimelineIndex(
+          fork.threadId,
+          new Set([...seen, threadId]),
+          includePersistentOutput,
+        );
         const sourceRun = source.records.runs.find((run) => run.id === fork.runId);
         let inherited: Array<TimelineIndexRow> = [];
         if (sourceRun !== undefined) {
@@ -5442,7 +5451,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const index = yield* readTimelineIndex(threadId, new Set());
+            const index = yield* readTimelineIndex(threadId, new Set(), workMode !== undefined);
             if (index.records.thread.deletedAt !== null)
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
             const revisions = yield* sql<{
