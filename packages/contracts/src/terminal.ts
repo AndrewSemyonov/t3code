@@ -26,7 +26,7 @@ export const TerminalThreadInput = Schema.Struct({
 });
 export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
-/** Terminal ids are ALWAYS chosen by the client and sent explicitly — no server-side allocation. */
+// Terminal ids are client-chosen; the server never allocates them.
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdSchema,
@@ -76,17 +76,6 @@ export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInpu
 
 export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
-
-export const TerminalRestartInput = Schema.Struct({
-  ...TerminalSessionInput.fields,
-  cwd: TrimmedNonEmptyStringSchema,
-  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
-  cols: TerminalColsSchema,
-  rows: TerminalRowsSchema,
-  env: Schema.optional(TerminalEnvSchema),
-  providerInstanceId: Schema.optional(ProviderInstanceId),
-});
-export type TerminalRestartInput = typeof TerminalRestartInput.Type;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
